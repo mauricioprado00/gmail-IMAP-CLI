@@ -11,9 +11,17 @@ gap — flag it if you want it changed. Nothing is implemented yet.
 
 ### 1.1 Accounts
 
-Each Gmail account's config/secrets live in one JSON file under
-`./accounts/<alias>.json` (project-local dir, as you confirmed — no
-`~/.config` support for now).
+Each Gmail account's config/secrets live in one JSON file, named
+`<alias>.json`, stored in one of two **scopes**:
+
+- **local** — `./accounts/<alias>.json`, resolved by searching upward from
+  the current working directory for a directory literally named
+  `accounts/` (like how `.git` is discovered) — **[PROPOSAL]**: stop at the
+  first `accounts/` found walking up from CWD; if none exists anywhere up
+  to `$HOME` or `/`, treat "local" as unavailable (fall through to global,
+  or error, depending on the command — see resolution order below).
+- **global** — `~/.config/gic/accounts/<alias>.json` (user-space wide, not
+  system-wide, per your clarification — not `/etc`).
 
 ```json
 {
@@ -22,18 +30,55 @@ Each Gmail account's config/secrets live in one JSON file under
   "imapHost": "imap.gmail.com",
   "imapPort": 993,
   "appPassword": "xxxx xxxx xxxx xxxx",
+  "scope": "local",
   "createdAt": "2026-08-28T09:00:00Z",
   "updatedAt": "2026-08-28T09:00:00Z"
 }
 ```
+**[PROPOSAL]**: add a `scope` field to the JSON itself (redundant with
+*where* the file lives, but handy for `account list --json` and for sanity
+checks if a file is ever copied between the two directories by hand).
 
-- File written with `0600` permissions.
+#### Choosing local vs. global on `account add`
+
+```
+gic account add [alias] --local     # default
+gic account add [alias] --global
+gic account add [alias] -g          # shorthand for --global
+```
+**[PROPOSAL]**: default is `--local` (matches current behavior); `--global`
+opts into `~/.config/gic/accounts/`. Only one of `--local`/`--global` may be
+given.
+
+#### Resolution order (list / select / -s / every other command)
+
+Since accounts can now live in two places, commands that need to find an
+account merge both scopes:
+
+1. Collect accounts from **local** `accounts/` (if found) and **global**
+   `~/.config/gic/accounts/` (if it exists).
+2. If the same alias exists in both, **local shadows global** (only the
+   local one is shown/used) — same intuition as project-local config
+   overriding user-global config in other tools.
+3. The merged set is sorted by alias for `-s <N>` numbering, exactly as
+   `gic account list` prints it (recomputed every call, no stored IDs).
+
+`gic account list` marks each entry's scope:
+```
+$ gic account list
+1. mauricioprado00@gmail.com (mauricioprado00) [local]
+2. someone@gmail.com (work) [global]
+```
+**[PROPOSAL]**: `--local-only` / `--global-only` flags on `account list` (and
+implicitly on resolution for `-s`/`select`, e.g. `-s global:work`) to
+disambiguate two same-alias accounts if you ever want to bypass the
+shadowing rule. Flag if you'd rather just rely on renaming to avoid
+collisions instead of adding this extra syntax.
+
+- File written with `0600` permissions in either scope.
 - `alias` defaults to the full email address when not given to `account add`.
-- Accounts are numbered by **sorted alias order** for `-s <N>` purposes; the
-  numbering is exactly what `gic account list` prints, recomputed every time
-  (no stored numeric IDs).
-- Removing an account is just deleting its file — no `account remove`
-  command (confirmed, dropped from spec).
+- Removing an account is just deleting its file from whichever scope it's
+  in — no `account remove` command (confirmed, dropped from spec).
 
 ### 1.2 Session state via environment variables
 
@@ -112,11 +157,13 @@ account-required commands), `gic` exits with an error telling you to run
 
 ## 2. `gic account` — manage accounts
 
-### `gic account add [alias]`
+### `gic account add [alias] [--local|--global|-g]`
 Prompts interactively for the Gmail address and app password (hidden
 input), opens an IMAP connection to `imap.gmail.com:993`, and does a
 `SELECT INBOX` to validate before saving. Alias defaults to the email
 address. Fails without writing the file if login/validation fails.
+`--local` (default) saves under `./accounts/`; `--global`/`-g` saves under
+`~/.config/gic/accounts/` (see §1.1).
 
 ```
 $ gic account add work
@@ -124,26 +171,37 @@ Gmail address: someone@gmail.com
 App password: ****************
 ✓ Verified IMAP login for someone@gmail.com
 ✓ Saved accounts/work.json
+
+$ gic account add personal --global
+Gmail address: me@gmail.com
+App password: ****************
+✓ Verified IMAP login for me@gmail.com
+✓ Saved ~/.config/gic/accounts/personal.json
 ```
 
 ### `gic account list`
 ```
 $ gic account list
-1. mauricioprado00@gmail.com (mauricioprado00)
-2. someone@gmail.com (work)
+1. mauricioprado00@gmail.com (mauricioprado00) [local]
+2. someone@gmail.com (work) [local]
+3. me@gmail.com (personal) [global]
 ```
-If `alias == email`, prints just `1. mauricioprado00@gmail.com` (no
-redundant parenthetical).
+If `alias == email`, prints just `1. mauricioprado00@gmail.com [local]` (no
+redundant parenthetical). Merges local + global per the resolution order
+in §1.1 (local shadows global on alias collision).
 
 ### `gic account rename <old-alias> <new-alias>`
-Renames the JSON file, updates its `alias` field. Fails if `new-alias`
-already exists. **Note:** since selection now lives in `$GIC_ACCOUNT` (a
-plain string you set yourself), a rename does *not* retroactively fix any
-shell where you already `export`ed the old alias — you'll need to
+Renames the JSON file **within its current scope**, updates its `alias`
+field. Fails if `new-alias` already exists **in that same scope** (an alias
+may still collide across scopes, in which case local shadows global per
+§1.1). **Note:** since selection now lives in `$GIC_ACCOUNT` (a plain
+string you set yourself), a rename does *not* retroactively fix any shell
+where you already `export`ed the old alias — you'll need to
 `gic select <new-alias>` again in open shells. This will be called out in
 the rename command's output.
 
-*(`gic account remove` intentionally omitted — just `rm accounts/<alias>.json`.)*
+*(`gic account remove` intentionally omitted — just delete the JSON file
+from whichever scope it's in.)*
 
 ---
 
@@ -339,11 +397,17 @@ Supports all `gic search` filter flags, plus:
 
 ---
 
-## 9. Remaining open item
+## 9. Remaining open items
 
-- §4.1's AND/OR combination rule and §4.2's three retrieval modes are new
-  proposals (not previously specified) — please confirm these match what
-  you want, or adjust, before implementation starts.
+- §1.1's **local/global account scope** design is new — please confirm:
+  - Is walking up from CWD to find `accounts/` the right lookup (vs. only
+    checking the exact CWD, as before)?
+  - Is "local shadows global" the right collision rule, or would you
+    rather collisions be an error requiring a rename?
+  - Do you want the `--local-only`/`--global-only` disambiguation flags, or
+    skip them for now?
 
-Once confirmed, I'll scaffold the Go module (`cobra` or stdlib `flag`
-subcommands + an IMAP client library) and start implementing.
+Once confirmed, I'll implement the local/global scope changes in
+`internal/account` and `internal/cli` (everything else in this doc is
+already implemented and working).
+
