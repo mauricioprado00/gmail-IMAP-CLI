@@ -110,8 +110,11 @@ func (c *Client) Select(mailbox string) (*MailboxStatus, error) {
 // Create creates a mailbox/label. Returns nil if it already exists.
 func (c *Client) Create(mailbox string) error {
 	_, err := c.Cmd(fmt.Sprintf("CREATE %s", quote(mailbox)))
-	if err != nil && strings.Contains(strings.ToUpper(err.Error()), "ALREADY EXISTS") {
-		return nil
+	if err != nil {
+		up := strings.ToUpper(err.Error())
+		if strings.Contains(up, "ALREADYEXISTS") || strings.Contains(up, "ALREADY EXISTS") {
+			return nil
+		}
 	}
 	return err
 }
