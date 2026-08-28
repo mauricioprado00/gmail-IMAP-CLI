@@ -113,7 +113,10 @@ gic() {
 }
 ```
 (The real compiled binary is installed/named `gic-bin`; `gic` becomes this
-shell function. `gic-bin select ...` alone — e.g. run from a script — just
+shell function and an executable wrapper for scripts. The wrapper starts a
+private connection-pooling daemon on demand, with at most two connections per
+account and a 60-second idle TTL; the daemon exits when its pool is empty.
+`gic-bin select ...` alone — e.g. run from a script — just
 prints the `export ...` lines instead of erroring, so it degrades cleanly.)
 
 **Environment variables used:**

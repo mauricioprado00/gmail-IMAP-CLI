@@ -61,6 +61,10 @@ source ~/.bashrc
 ```
 
 After that, `gic <command>` works transparently (see docs/COMMANDS.md §1.2).
+The installed `gic` executable is an on-demand connection-pooling wrapper.
+It starts a private local daemon when needed; this is not a system service.
+The daemon keeps at most two authenticated connections per account, closes
+connections after 60 seconds idle, and exits when its pool becomes empty.
 
 ## Quick start
 

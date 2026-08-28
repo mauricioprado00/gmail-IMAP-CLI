@@ -71,12 +71,15 @@ const ShellInit = `gic() {
           eval "$(command gic-bin "$@")"
           ;;
         *)
-          command gic-bin "$@"
+          command gic "$@"
           ;;
       esac
       ;;
-    *)
+    shell-init)
       command gic-bin "$@"
+      ;;
+    *)
+      command gic "$@"
       ;;
   esac
 }

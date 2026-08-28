@@ -28,7 +28,7 @@ func newTestClient(t *testing.T, handle func(cmd string, w *bufio.Writer, r *buf
 		}
 	}()
 	c := &Conn{r: bufio.NewReaderSize(clientSide, 8192), w: clientSide}
-	return &Client{c}
+	return &Client{transport: c}
 }
 
 func tag(cmd string) string {

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+gic_bin="$(dirname "$0")/gic-bin"
+if [ ! -x "$gic_bin" ]; then
+  gic_bin="$(command -v gic-bin)"
+fi
+
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+  runtime_dir="$XDG_RUNTIME_DIR/gic"
+else
+  runtime_dir="${TMPDIR:-/tmp}/gic-$UID"
+fi
+socket="$runtime_dir/daemon.sock"
+
+umask 077
+mkdir -p "$runtime_dir" || exec "$gic_bin" "$@"
+
+if "$gic_bin" daemon start --socket "$socket"; then
+  export GIC_DAEMON_SOCKET="$socket"
+else
+  unset GIC_DAEMON_SOCKET
+fi
+exec "$gic_bin" "$@"

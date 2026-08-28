@@ -3,10 +3,12 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
 	"gic/internal/cli"
+	"gic/internal/imapd"
 )
 
 // extractGlobals scans args for -s, -m/--mailbox, -v/--verbose anywhere in
@@ -38,6 +40,10 @@ func extractGlobals(args []string) (cli.Globals, []string) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "daemon" {
+		runDaemon(os.Args[2:])
+		return
+	}
 	g, args := extractGlobals(os.Args[1:])
 	if len(args) == 0 {
 		usage()
@@ -110,6 +116,37 @@ func main() {
 		cli.ShellInit()
 	default:
 		usage()
+		os.Exit(1)
+	}
+}
+
+func runDaemon(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: gic-bin daemon start|serve|ping --socket <path>")
+		os.Exit(1)
+	}
+	fs := flag.NewFlagSet("daemon "+args[0], flag.ExitOnError)
+	socket := fs.String("socket", "", "Unix socket path")
+	if err := fs.Parse(args[1:]); err != nil {
+		os.Exit(1)
+	}
+	if *socket == "" {
+		fmt.Fprintln(os.Stderr, "gic: daemon --socket is required")
+		os.Exit(1)
+	}
+	var err error
+	switch args[0] {
+	case "start":
+		err = imapd.Start(*socket)
+	case "serve":
+		err = imapd.Serve(*socket)
+	case "ping":
+		err = imapd.Ping(*socket)
+	default:
+		err = fmt.Errorf("unknown daemon command %q", args[0])
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gic: "+err.Error())
 		os.Exit(1)
 	}
 }

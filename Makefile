@@ -14,6 +14,8 @@ vet:
 install: build
 	mkdir -p ~/.local/bin
 	cp bin/gic-bin ~/.local/bin/gic-bin
+	cp scripts/gic ~/.local/bin/gic
+	chmod +x ~/.local/bin/gic
 
 clean:
 	rm -rf bin

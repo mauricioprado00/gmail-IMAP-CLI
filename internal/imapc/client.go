@@ -2,18 +2,46 @@ package imapc
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// Client wraps Conn with higher-level Gmail-IMAP operations.
+type commandTransport interface {
+	Cmd(string) (*Response, error)
+	CmdLiteral(string, []byte) (*Response, error)
+	Close() error
+}
+
+// Client wraps a direct or daemon-leased connection with higher-level
+// Gmail-IMAP operations.
 type Client struct {
-	*Conn
+	transport commandTransport
+	pooled    bool
 }
 
 // Connect dials, reads the greeting and logs in.
 func Connect(host string, port int, user, pass string, debug bool) (*Client, error) {
+	// Protocol traces belong on this process's stderr, so verbose sessions
+	// deliberately bypass the daemon.
+	if socket := os.Getenv("GIC_DAEMON_SOCKET"); socket != "" && !debug {
+		client, brokerErr := connectBroker(socket, host, port, user, pass, debug)
+		if brokerErr == nil {
+			return client, nil
+		}
+		client, directErr := ConnectDirect(host, port, user, pass, debug)
+		if directErr != nil {
+			return nil, fmt.Errorf("daemon connection failed (%v); direct connection failed: %w", brokerErr, directErr)
+		}
+		return client, nil
+	}
+	return ConnectDirect(host, port, user, pass, debug)
+}
+
+// ConnectDirect opens an IMAP connection without consulting the local
+// connection broker. It is used by the daemon when creating pooled clients.
+func ConnectDirect(host string, port int, user, pass string, debug bool) (*Client, error) {
 	c, err := Dial(host, port)
 	if err != nil {
 		return nil, err
@@ -23,7 +51,25 @@ func Connect(host string, port int, user, pass string, debug bool) (*Client, err
 		c.Close()
 		return nil, err
 	}
-	return &Client{c}, nil
+	return &Client{transport: c}, nil
+}
+
+func (c *Client) Cmd(command string) (*Response, error) {
+	return c.transport.Cmd(command)
+}
+
+func (c *Client) CmdLiteral(prefix string, literal []byte) (*Response, error) {
+	return c.transport.CmdLiteral(prefix, literal)
+}
+
+func (c *Client) Close() error {
+	return c.transport.Close()
+}
+
+func (c *Client) Logout() {
+	if !c.pooled {
+		_, _ = c.Cmd("LOGOUT")
+	}
 }
 
 // Mailbox describes one entry from LIST.
@@ -147,9 +193,9 @@ type FetchResult struct {
 	Labels   []string
 	ThreadID string
 	Size     int
-	Headers []byte // raw header bytes (light/standard modes)
-	Text    []byte // raw BODY[TEXT] bytes (standard mode)
-	Raw     []byte // full raw RFC822 message (full mode)
+	Headers  []byte // raw header bytes (light/standard modes)
+	Text     []byte // raw BODY[TEXT] bytes (standard mode)
+	Raw      []byte // full raw RFC822 message (full mode)
 }
 
 // UIDFetch fetches `items` for the given UIDs. items is a raw IMAP fetch
