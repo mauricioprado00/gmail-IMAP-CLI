@@ -1,0 +1,349 @@
+# gic — Gmail IMAP CLI
+
+`gic` is a Go CLI for searching, labeling, and copying email between Gmail
+accounts over IMAP (App Password auth). This is v2 of the spec, updated
+per your answers. Anything still marked **[PROPOSAL]** is a design filling a
+gap — flag it if you want it changed. Nothing is implemented yet.
+
+---
+
+## 1. Concepts
+
+### 1.1 Accounts
+
+Each Gmail account's config/secrets live in one JSON file under
+`./accounts/<alias>.json` (project-local dir, as you confirmed — no
+`~/.config` support for now).
+
+```json
+{
+  "alias": "mauricioprado00",
+  "email": "mauricioprado00@gmail.com",
+  "imapHost": "imap.gmail.com",
+  "imapPort": 993,
+  "appPassword": "xxxx xxxx xxxx xxxx",
+  "createdAt": "2026-08-28T09:00:00Z",
+  "updatedAt": "2026-08-28T09:00:00Z"
+}
+```
+
+- File written with `0600` permissions.
+- `alias` defaults to the full email address when not given to `account add`.
+- Accounts are numbered by **sorted alias order** for `-s <N>` purposes; the
+  numbering is exactly what `gic account list` prints, recomputed every time
+  (no stored numeric IDs).
+- Removing an account is just deleting its file — no `account remove`
+  command (confirmed, dropped from spec).
+
+### 1.2 Session state via environment variables
+
+You asked for env vars instead of PID-keyed session files. The problem:
+a child process (the `gic` binary) cannot modify its parent shell's
+environment directly. The standard fix (used by tools like `direnv`,
+`pyenv`, `kubectl`) is:
+
+- `gic select <alias|N>` and `gic mailbox select <name>` **print shell
+  export statements to stdout** instead of mutating anything themselves.
+- You wrap the real binary in a tiny shell function (installed once) so
+  that typing `gic select 1` "just works" transparently, without you typing
+  `eval $(...)` yourself.
+
+**Setup (one-time):**
+```
+$ gic shell-init >> ~/.bashrc      # or ~/.zshrc
+$ source ~/.bashrc
+```
+
+`gic shell-init` prints:
+```bash
+gic() {
+  case "$1" in
+    select|unselect|mailbox)
+      eval "$(command gic-bin "$@")"
+      ;;
+    *)
+      command gic-bin "$@"
+      ;;
+  esac
+}
+```
+(The real compiled binary is installed/named `gic-bin`; `gic` becomes this
+shell function. `gic-bin select ...` alone — e.g. run from a script — just
+prints the `export ...` lines instead of erroring, so it degrades cleanly.)
+
+**Environment variables used:**
+
+| Var | Set by | Meaning |
+|---|---|---|
+| `GIC_ACCOUNT` | `gic select <alias\|N>` | Currently selected account alias |
+| `GIC_MAILBOX` | `gic mailbox select <name>` | Currently selected mailbox/label (default `INBOX` if unset) |
+
+```
+$ gic select 1
+$ echo $GIC_ACCOUNT
+mauricioprado00
+
+$ gic mailbox select "[Gmail]/All Mail"
+$ echo $GIC_MAILBOX
+[Gmail]/All Mail
+
+$ gic unselect            # clears GIC_ACCOUNT
+```
+
+Because these are plain env vars, they're naturally scoped per-shell/tab
+(exactly like your original per-session goal) with zero extra state files,
+and they survive/compose normally with subshells, scripts, `env -i`, etc.
+
+### 1.3 One-off overrides (flags)
+
+Every command accepts:
+- `-s <alias|N>` — override `$GIC_ACCOUNT` for this invocation only.
+- `-m, --mailbox <name>` — override `$GIC_MAILBOX` for this invocation only.
+
+```
+gic -s 1 -m "[Gmail]/All Mail" search label accountant
+```
+
+If neither the env var nor the flag resolves an account (for
+account-required commands), `gic` exits with an error telling you to run
+`gic select` or pass `-s`. Mailbox defaults to `INBOX` if fully unresolved.
+
+---
+
+## 2. `gic account` — manage accounts
+
+### `gic account add [alias]`
+Prompts interactively for the Gmail address and app password (hidden
+input), opens an IMAP connection to `imap.gmail.com:993`, and does a
+`SELECT INBOX` to validate before saving. Alias defaults to the email
+address. Fails without writing the file if login/validation fails.
+
+```
+$ gic account add work
+Gmail address: someone@gmail.com
+App password: ****************
+✓ Verified IMAP login for someone@gmail.com
+✓ Saved accounts/work.json
+```
+
+### `gic account list`
+```
+$ gic account list
+1. mauricioprado00@gmail.com (mauricioprado00)
+2. someone@gmail.com (work)
+```
+If `alias == email`, prints just `1. mauricioprado00@gmail.com` (no
+redundant parenthetical).
+
+### `gic account rename <old-alias> <new-alias>`
+Renames the JSON file, updates its `alias` field. Fails if `new-alias`
+already exists. **Note:** since selection now lives in `$GIC_ACCOUNT` (a
+plain string you set yourself), a rename does *not* retroactively fix any
+shell where you already `export`ed the old alias — you'll need to
+`gic select <new-alias>` again in open shells. This will be called out in
+the rename command's output.
+
+*(`gic account remove` intentionally omitted — just `rm accounts/<alias>.json`.)*
+
+---
+
+## 3. `gic select` / `gic mailbox select`
+
+Covered in §1.2. Quick reference:
+
+```
+gic select <alias|N>          # export GIC_ACCOUNT=<alias>
+gic unselect                  # unset GIC_ACCOUNT
+gic mailbox select <name>     # export GIC_MAILBOX=<name>
+gic mailbox unselect          # unset GIC_MAILBOX (defaults back to INBOX)
+gic mailbox list              # list mailboxes/labels on the selected account
+```
+
+### `gic mailbox list`
+Lists all mailboxes/labels available on the selected account (via IMAP
+`LIST`), numbered like `account list`, marking the currently selected one:
+
+```
+$ gic mailbox list
+1. INBOX (selected)
+2. [Gmail]/All Mail
+3. [Gmail]/Sent Mail
+4. [Gmail]/Trash
+5. accountant
+6. reviewed
+```
+Supports `-s <alias|N>` to list mailboxes for a non-selected account
+without switching to it. **[PROPOSAL]** `--json` prints the raw list as a
+JSON array of `{ "name": ..., "flags": [...] }` instead of the numbered
+text form.
+
+---
+
+## 4. `gic search` — find messages
+
+Searches the selected account + mailbox and prints a JSON array to stdout.
+
+### 4.1 Combining filters — proposed solution
+
+Flags are the primary interface (combinable); the single-filter positional
+form you originally showed is kept only as shorthand sugar for the common
+one-filter case, and internally maps to the same flag.
+
+**Combination rule** (standard convention, e.g. similar to `git log`):
+- **Different flags → AND.** `--from a --label b` matches messages that are
+  both from `a` AND labeled `b`.
+- **Repeated same flag → OR.** `--label a --label b` matches messages
+  labeled `a` OR `b`.
+- `--body`/`--subject` are logically AND'ed with everything else, but you
+  can still repeat them for an OR within that field:
+  `--subject invoice --subject receipt`.
+
+| Flag | Example | IMAP mapping |
+|---|---|---|
+| `--from <addr>` | `--from someone@x.com` | `FROM` |
+| `--to <addr>` | `--to someone@x.com` | `TO` |
+| `--subject <text>` | `--subject "Invoice"` | `SUBJECT` |
+| `--body <text>` | `--body "invoice #123"` | `BODY` |
+| `--label <name>` | `--label accountant` | Gmail `X-GM-RAW label:accountant` |
+| `--header <name>=<value>` | `--header X-GM-THRID=123456789` | `HEADER <name> <value>` |
+| `--since <date>` | `--since 2026-01-01` | `SINCE` |
+| `--before <date>` | `--before 2026-08-01` | `BEFORE` |
+
+```
+# shorthand (single filter)
+gic search label accountant
+gic search subject "whatever"
+
+# flag form (combinable, AND across flags / OR within repeats)
+gic search --from someone@x.com --label accountant --subject "Invoice"
+gic search --label accountant --label reviewed        # label=a OR label=b
+gic search --header X-GM-THRID=1234567890123456789
+```
+
+Other flags:
+- `--all-mailboxes` — search across every mailbox instead of just
+  `$GIC_MAILBOX`/`-m` (Gmail: effectively `[Gmail]/All Mail`).
+- `--limit <N>` — cap number of results.
+- `--mode <light|standard|full>` — see §4.2 (default `standard`).
+
+### 4.2 Retrieval modes
+
+Controls IMAP `FETCH` cost/detail, per your request for lighter/heavier
+options:
+
+| Mode | IMAP items fetched | Contents |
+|---|---|---|
+| `light` | `FLAGS`, `ENVELOPE`, `RFC822.SIZE` | Headers-only metadata: from/to/subject/date/message-id/flags/size. No body, no attachments. Fastest, used for large bulk scans. |
+| `standard` *(default)* | + `BODY.PEEK[TEXT]` of non-attachment parts (via `BODYSTRUCTURE` walk) | Adds plain-text/HTML body content, excludes attachment parts. |
+| `full` | `BODY.PEEK[]` (entire raw RFC822 message) | Everything, including attachments, base64-encoded as in the raw message. Needed before `gic copy`/`gic fetch` re-append elsewhere. |
+
+```
+gic search label accountant --mode light
+```
+
+
+### 4.3 Output (JSON)
+
+```json
+[
+  {
+    "uid": 4821,
+    "mailbox": "[Gmail]/All Mail",
+    "messageId": "<abc123@mail.gmail.com>",
+    "threadId": "1234567890123456789",
+    "from": "someone@x.com",
+    "to": ["mauricioprado00@gmail.com"],
+    "subject": "Invoice #123",
+    "date": "2026-08-01T10:00:00Z",
+    "labels": ["accountant", "INBOX"],
+    "size": 20481,
+    "body": { "text": "...", "html": "..." },
+    "raw": "<base64, only in full mode>"
+  }
+]
+```
+`body`/`raw` keys are present only for `standard`/`full` modes respectively.
+This JSON is meant to be piped into `gic label apply`, `gic fetch`, or
+`gic copy`.
+
+---
+
+## 5. `gic label` — manage & apply Gmail labels
+
+### `gic label list`
+Lists all labels/mailboxes on the selected account.
+
+### `gic label create <name>`
+Creates a Gmail label if it doesn't already exist (no-op success if it
+does).
+
+### `gic label apply <name> --uid <uid>[,...]`
+Applies a label to one or more messages by UID; auto-creates the label
+unless `--no-create` is passed.
+
+```
+gic search label accountant | gic label apply reviewed --stdin
+```
+`--stdin` reads a JSON array (the `search` output shape) from stdin and
+applies the label to every message in it, instead of `--uid`.
+
+### `gic label remove <name> --uid <uid>[,...]`
+Removes a label from messages (does not delete the label itself).
+
+---
+
+## 6. `gic fetch` — download messages
+
+```
+gic fetch --uid 4821 -o ./out/4821.eml
+gic search label accountant --mode full | gic fetch --stdin -o ./out/
+```
+Downloads full raw RFC822 message(s) to disk, one `.eml` file per message
+when given multiple (named by UID). `-o -` writes raw bytes to stdout for a
+single message.
+
+---
+
+## 7. `gic copy` — cross-account copy
+
+```
+gic copy --from-account mauricioprado00 --to-account work \
+  --label accountant \
+  --apply-label imported \
+  --to-mailbox "[Gmail]/All Mail"
+```
+
+Steps:
+1. Runs the equivalent of `gic -s <from-account> search <filters> --mode full`.
+2. For each match, appends the raw message to the destination account's
+   target mailbox via IMAP `APPEND`, preserving `INTERNALDATE`/flags where
+   possible.
+3. If `--apply-label` is given, applies that label on the destination after
+   append.
+4. Prints a JSON summary (counts + per-message success/failure).
+
+Supports all `gic search` filter flags, plus:
+- `--dry-run` — preview matches (light mode) without appending anything.
+- `--skip-duplicates` — skip messages whose `Message-ID` already exists in
+  the destination mailbox (idempotent re-runs).
+
+---
+
+## 8. Global flags (all commands)
+
+| Flag | Description |
+|---|---|
+| `-s <alias\|N>` | One-off account override (§1.3) |
+| `-m, --mailbox <name>` | One-off mailbox override (§1.3) |
+| `-v, --verbose` | Print IMAP protocol trace to stderr |
+
+---
+
+## 9. Remaining open item
+
+- §4.1's AND/OR combination rule and §4.2's three retrieval modes are new
+  proposals (not previously specified) — please confirm these match what
+  you want, or adjust, before implementation starts.
+
+Once confirmed, I'll scaffold the Go module (`cobra` or stdlib `flag`
+subcommands + an IMAP client library) and start implementing.
