@@ -265,7 +265,13 @@ one-filter case, and internally maps to the same flag.
 | `--label <name>` | `--label accountant` | Gmail `X-GM-RAW label:accountant` |
 | `--header <name>=<value>` | `--header X-GM-THRID=123456789` | `HEADER <name> <value>` |
 | `--since <date>` | `--since 2026-01-01` | `SINCE` |
-| `--before <date>` | `--before 2026-08-01` | `BEFORE` |
+| `--until <date>` | `--until +5days` | `BEFORE` |
+
+Dates accept `YYYY-MM-DD` or one or more signed offsets from today. Supported
+units are `day`, `week`, `month`, and `year`, with singular or plural names.
+For example, `+5days` means five days from now and `-1month -1week` means one
+month and one week ago. `--until` is an exclusive upper bound because it maps
+to IMAP's `BEFORE`; `--before` remains available as an alias.
 
 ```
 # shorthand (single filter)
@@ -276,6 +282,7 @@ gic search subject "whatever"
 gic search --from someone@x.com --label accountant --subject "Invoice"
 gic search --label accountant --label reviewed        # label=a OR label=b
 gic search --header X-GM-THRID=1234567890123456789
+gic search --since -1month -1week --until +1day
 ```
 
 Other flags:
@@ -410,4 +417,3 @@ Supports all `gic search` filter flags, plus:
 Once confirmed, I'll implement the local/global scope changes in
 `internal/account` and `internal/cli` (everything else in this doc is
 already implemented and working).
-

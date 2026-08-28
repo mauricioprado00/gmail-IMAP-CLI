@@ -6,6 +6,7 @@ package search
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,8 +22,9 @@ type Filters struct {
 	// name). "X-GM-THRID" and "X-GM-MSGID" are special-cased to use
 	// Gmail's dedicated IMAP SEARCH keys instead of generic HEADER.
 	Header map[string][]string
-	Since  string // "2006-01-02"
-	Before string // "2006-01-02"
+	Since  string // "2006-01-02" or a signed day offset such as "+5days"
+	Until  string // exclusive upper bound; same formats as Since
+	Before string // deprecated alias for Until
 }
 
 // Build renders the filters into a single IMAP UID SEARCH criteria string.
@@ -69,17 +71,24 @@ func (f Filters) Build() (string, error) {
 		}
 	}
 
+	now := time.Now()
 	if f.Since != "" {
-		d, err := parseDate(f.Since)
+		d, err := parseDate(f.Since, now)
 		if err != nil {
 			return "", fmt.Errorf("--since: %w", err)
 		}
 		parts = append(parts, "SINCE "+d)
 	}
-	if f.Before != "" {
-		d, err := parseDate(f.Before)
+	until := f.Until
+	untilFlag := "--until"
+	if until == "" {
+		until = f.Before
+		untilFlag = "--before"
+	}
+	if until != "" {
+		d, err := parseDate(until, now)
 		if err != nil {
-			return "", fmt.Errorf("--before: %w", err)
+			return "", fmt.Errorf("%s: %w", untilFlag, err)
 		}
 		parts = append(parts, "BEFORE "+d)
 	}
@@ -90,12 +99,54 @@ func (f Filters) Build() (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
-func parseDate(s string) (string, error) {
+func parseDate(s string, now time.Time) (string, error) {
 	t, err := time.Parse("2006-01-02", s)
-	if err != nil {
-		return "", err
+	if err == nil {
+		return t.Format("02-Jan-2006"), nil
 	}
+
+	var years, months, days int
+	terms := strings.Fields(strings.ToLower(s))
+	if len(terms) == 0 {
+		return "", invalidDateError(s)
+	}
+	for _, term := range terms {
+		numberEnd := 1
+		if len(term) < 3 || (term[0] != '+' && term[0] != '-') {
+			return "", invalidDateError(s)
+		}
+		for numberEnd < len(term) && term[numberEnd] >= '0' && term[numberEnd] <= '9' {
+			numberEnd++
+		}
+		if numberEnd == 1 {
+			return "", invalidDateError(s)
+		}
+		amount, err := strconv.Atoi(term[:numberEnd])
+		if err != nil {
+			return "", fmt.Errorf("invalid date offset %q: %w", term, err)
+		}
+		switch term[numberEnd:] {
+		case "day", "days":
+			days += amount
+		case "week", "weeks":
+			days += amount * 7
+		case "month", "months":
+			months += amount
+		case "year", "years":
+			years += amount
+		default:
+			return "", invalidDateError(s)
+		}
+	}
+	t = now.AddDate(years, months, days)
 	return t.Format("02-Jan-2006"), nil
+}
+
+func invalidDateError(s string) error {
+	return fmt.Errorf(
+		"invalid date %q (want YYYY-MM-DD or signed day/week/month/year offsets such as +5days or -1month -1week)",
+		s,
+	)
 }
 
 func quote(s string) string {

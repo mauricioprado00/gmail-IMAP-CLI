@@ -15,6 +15,7 @@ import (
 
 var shorthandKeys = map[string]bool{
 	"from": true, "to": true, "subject": true, "body": true, "label": true, "header": true,
+	"since": true, "until": true,
 }
 
 // parseSearchArgs parses either the shorthand single-filter form
@@ -49,6 +50,10 @@ func parseSearchArgs(args []string) (search.Filters, string, int, bool, error) {
 			f.Body = []string{args[1]}
 		case "label":
 			f.Label = []string{args[1]}
+		case "since":
+			f.Since = strings.Join(args[1:], " ")
+		case "until":
+			f.Until = strings.Join(args[1:], " ")
 		}
 		return f, mode, limit, allMailboxes, nil
 	}
@@ -61,17 +66,19 @@ func parseSearchArgs(args []string) (search.Filters, string, int, bool, error) {
 	fs.Var(&body, "body", "match body text (repeatable = OR)")
 	fs.Var(&label, "label", "match Gmail label (repeatable = OR)")
 	fs.Var(&header, "header", "match header, format NAME=VALUE (repeatable = OR within same NAME)")
-	since := fs.String("since", "", "only messages since this date (YYYY-MM-DD)")
-	before := fs.String("before", "", "only messages before this date (YYYY-MM-DD)")
+	since := fs.String("since", "", "only messages since this date ("+dateFilterFormat+")")
+	var until string
+	fs.StringVar(&until, "until", "", "only messages before this date ("+dateFilterFormat+")")
+	fs.StringVar(&until, "before", "", "alias for --until")
 	fs.StringVar(&mode, "mode", "standard", "retrieval mode: light|standard|full")
 	fs.IntVar(&limit, "limit", 0, "cap number of results (0 = unlimited)")
 	fs.BoolVar(&allMailboxes, "all-mailboxes", false, "search across all mailboxes")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(normalizeTimeFilterArgs(args)); err != nil {
 		return f, mode, limit, allMailboxes, err
 	}
 
 	f.From, f.To, f.Subject, f.Body, f.Label = from, to, subject, body, label
-	f.Since, f.Before = *since, *before
+	f.Since, f.Until = *since, until
 	if len(header) > 0 {
 		f.Header = map[string][]string{}
 		for _, h := range header {

@@ -1,6 +1,9 @@
 package search
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBuildAndAcrossFilterTypes(t *testing.T) {
 	f := Filters{From: []string{"a@x.com"}, Label: []string{"accountant"}}
@@ -73,8 +76,8 @@ func TestBuildHeaderGeneric(t *testing.T) {
 	}
 }
 
-func TestBuildSinceBeforeDateFormat(t *testing.T) {
-	f := Filters{Since: "2026-01-01", Before: "2026-08-01"}
+func TestBuildSinceUntilDateFormat(t *testing.T) {
+	f := Filters{Since: "2026-01-01", Until: "2026-08-01"}
 	got, err := f.Build()
 	if err != nil {
 		t.Fatal(err)
@@ -85,10 +88,38 @@ func TestBuildSinceBeforeDateFormat(t *testing.T) {
 	}
 }
 
+func TestParseRelativeDate(t *testing.T) {
+	now := time.Date(2026, time.August, 28, 20, 0, 0, 0, time.FixedZone("UTC+3", 3*60*60))
+	tests := map[string]string{
+		"+5days":          "02-Sep-2026",
+		"-2days":          "26-Aug-2026",
+		"+1day":           "29-Aug-2026",
+		"-1week":          "21-Aug-2026",
+		"-1month -1week":  "21-Jul-2026",
+		"+1year +2months": "28-Oct-2027",
+	}
+	for input, want := range tests {
+		got, err := parseDate(input, now)
+		if err != nil {
+			t.Fatalf("parseDate(%q): %v", input, err)
+		}
+		if got != want {
+			t.Errorf("parseDate(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestBuildInvalidDate(t *testing.T) {
 	f := Filters{Since: "not-a-date"}
 	if _, err := f.Build(); err == nil {
 		t.Error("expected error for invalid date")
+	}
+}
+
+func TestBuildInvalidRelativeDateUnit(t *testing.T) {
+	f := Filters{Since: "-1hour"}
+	if _, err := f.Build(); err == nil {
+		t.Error("expected error for unsupported relative date unit")
 	}
 }
 

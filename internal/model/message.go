@@ -37,10 +37,11 @@ type Message struct {
 // FromFetch builds a Message from a raw IMAP fetch result.
 func FromFetch(fr imapc.FetchResult, mailbox, mode string) *Message {
 	m := &Message{
-		UID:     fr.UID,
-		Mailbox: mailbox,
-		Labels:  fr.Labels,
-		Size:    fr.Size,
+		UID:      fr.UID,
+		Mailbox:  mailbox,
+		Labels:   fr.Labels,
+		ThreadID: fr.ThreadID,
+		Size:     fr.Size,
 	}
 
 	headerBytes := fr.Headers
@@ -83,10 +84,10 @@ func FetchItems(mode string) string {
 	const headerFields = `BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID)]`
 	switch mode {
 	case "light":
-		return "UID FLAGS X-GM-LABELS RFC822.SIZE " + headerFields
+		return "UID FLAGS X-GM-LABELS X-GM-THRID RFC822.SIZE " + headerFields
 	case "full":
-		return "UID FLAGS X-GM-LABELS RFC822.SIZE BODY.PEEK[]"
+		return "UID FLAGS X-GM-LABELS X-GM-THRID RFC822.SIZE BODY.PEEK[]"
 	default: // "standard"
-		return "UID FLAGS X-GM-LABELS RFC822.SIZE " + headerFields + " BODY.PEEK[TEXT]"
+		return "UID FLAGS X-GM-LABELS X-GM-THRID RFC822.SIZE " + headerFields + " BODY.PEEK[TEXT]"
 	}
 }

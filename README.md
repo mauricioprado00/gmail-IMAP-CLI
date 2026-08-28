@@ -71,6 +71,7 @@ gic select work
 gic mailbox list
 gic search label accountant
 gic search --from a@x.com --label accountant
+gic search --since -1month -1week --until +1day
 gic copy --from-account work --to-account personal --label accountant --dry-run
 ```
 

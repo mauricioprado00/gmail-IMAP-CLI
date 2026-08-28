@@ -139,10 +139,11 @@ func (c *Client) UIDSearch(criteria string) ([]uint32, error) {
 
 // FetchResult holds parsed FETCH data for one message.
 type FetchResult struct {
-	UID     uint32
-	Flags   []string
-	Labels  []string
-	Size    int
+	UID      uint32
+	Flags    []string
+	Labels   []string
+	ThreadID string
+	Size     int
 	Headers []byte // raw header bytes (light/standard modes)
 	Text    []byte // raw BODY[TEXT] bytes (standard mode)
 	Raw     []byte // full raw RFC822 message (full mode)
@@ -184,6 +185,9 @@ func (c *Client) UIDFetch(uids []uint32, items string) ([]FetchResult, error) {
 		}
 		if v, ok := m["X-GM-LABELS"].([]interface{}); ok {
 			fr.Labels = listToStrings(v)
+		}
+		if v, ok := m["X-GM-THRID"].(string); ok {
+			fr.ThreadID = v
 		}
 		if v, ok := m["RFC822.SIZE"].(string); ok {
 			if n, err := strconv.Atoi(v); err == nil {

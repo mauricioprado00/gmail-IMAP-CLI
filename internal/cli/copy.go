@@ -48,17 +48,19 @@ func Copy(args []string) {
 	fs.Var(&body, "body", "match body text (repeatable = OR)")
 	fs.Var(&label, "label", "match Gmail label (repeatable = OR)")
 	fs.Var(&header, "header", "match header, format NAME=VALUE (repeatable = OR within same NAME)")
-	since := fs.String("since", "", "only messages since this date (YYYY-MM-DD)")
-	before := fs.String("before", "", "only messages before this date (YYYY-MM-DD)")
+	since := fs.String("since", "", "only messages since this date ("+dateFilterFormat+")")
+	var until string
+	fs.StringVar(&until, "until", "", "only messages before this date ("+dateFilterFormat+")")
+	fs.StringVar(&until, "before", "", "alias for --until")
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(normalizeTimeFilterArgs(args)); err != nil {
 		exitErr(err)
 	}
 	if *fromAccount == "" || *toAccount == "" {
 		exitErr(fmt.Errorf("--from-account and --to-account are required"))
 	}
 
-	f := search.Filters{From: from, To: to, Subject: subject, Body: body, Label: label, Since: *since, Before: *before}
+	f := search.Filters{From: from, To: to, Subject: subject, Body: body, Label: label, Since: *since, Until: until}
 	if len(header) > 0 {
 		f.Header = map[string][]string{}
 		for _, h := range header {
