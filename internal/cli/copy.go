@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"net/mail"
 	"time"
 
 	"gic/internal/account"
@@ -151,7 +152,7 @@ func Copy(args []string) {
 		}
 
 		date := time.Now()
-		if t, err := time.Parse(time.RFC1123Z, m.Date); err == nil {
+		if t, err := mail.ParseDate(m.Date); err == nil {
 			date = t
 		}
 		if err := dstCl.Append(*toMailbox, nil, date, fr.Raw); err != nil {
