@@ -108,6 +108,20 @@ func main() {
 			usage()
 			os.Exit(1)
 		}
+	case "mark":
+		if len(rest) == 0 {
+			usage()
+			os.Exit(1)
+		}
+		switch rest[0] {
+		case "seen", "read":
+			cli.MarkSeen(rest[1:], g)
+		case "unseen", "unread":
+			cli.MarkUnseen(rest[1:], g)
+		default:
+			usage()
+			os.Exit(1)
+		}
 	case "fetch":
 		cli.Fetch(rest, g)
 	case "copy":
@@ -170,6 +184,8 @@ Commands:
   label create <name>              create a label
   label apply <name> [--uid..|--stdin]
   label remove <name> [--uid..|--stdin]
+  mark seen [--uid..|--stdin]      set \Seen (mark as read)
+  mark unseen [--uid..|--stdin]    clear \Seen (mark as unread)
   fetch [--uid..|--stdin] -o <path> download raw messages
   copy --from-account A --to-account B [filters...]
   shell-init                       print the shell function wrapper

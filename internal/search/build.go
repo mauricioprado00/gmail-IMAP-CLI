@@ -25,6 +25,9 @@ type Filters struct {
 	Since  string // "2006-01-02" or a signed day offset such as "+5days"
 	Until  string // exclusive upper bound; same formats as Since
 	Before string // deprecated alias for Until
+	// Seen restricts by read state: nil = no restriction, true = only
+	// read (SEEN) messages, false = only unread (UNSEEN) messages.
+	Seen *bool
 }
 
 // Build renders the filters into a single IMAP UID SEARCH criteria string.
@@ -91,6 +94,14 @@ func (f Filters) Build() (string, error) {
 			return "", fmt.Errorf("%s: %w", untilFlag, err)
 		}
 		parts = append(parts, "BEFORE "+d)
+	}
+
+	if f.Seen != nil {
+		if *f.Seen {
+			parts = append(parts, "SEEN")
+		} else {
+			parts = append(parts, "UNSEEN")
+		}
 	}
 
 	if len(parts) == 0 {

@@ -134,3 +134,37 @@ func TestQuoteEscaping(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestBuildSeenFilter(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name string
+		seen *bool
+		want string
+	}{
+		{"unset", nil, "ALL"},
+		{"seen", &yes, "SEEN"},
+		{"unseen", &no, "UNSEEN"},
+	}
+	for _, tc := range tests {
+		got, err := (Filters{Seen: tc.seen}).Build()
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestBuildSeenCombinesWithOtherFilters(t *testing.T) {
+	unread := false
+	got, err := (Filters{Label: []string{"accountant"}, Seen: &unread}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `X-GM-LABELS "accountant" UNSEEN`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

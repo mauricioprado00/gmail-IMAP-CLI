@@ -29,6 +29,8 @@ type Message struct {
 	Subject   string   `json:"subject,omitempty"`
 	Date      string   `json:"date,omitempty"`
 	Labels    []string `json:"labels,omitempty"`
+	Flags     []string `json:"flags,omitempty"`
+	Seen      bool     `json:"seen"`
 	Size      int      `json:"size"`
 	Body      *Body    `json:"body,omitempty"`
 	Raw       string   `json:"raw,omitempty"` // base64, full mode only
@@ -40,6 +42,8 @@ func FromFetch(fr imapc.FetchResult, mailbox, mode string) *Message {
 		UID:      fr.UID,
 		Mailbox:  mailbox,
 		Labels:   fr.Labels,
+		Flags:    fr.Flags,
+		Seen:     hasFlag(fr.Flags, `\Seen`),
 		ThreadID: fr.ThreadID,
 		Size:     fr.Size,
 	}
@@ -77,6 +81,17 @@ func FromFetch(fr imapc.FetchResult, mailbox, mode string) *Message {
 		}
 	}
 	return m
+}
+
+// hasFlag reports whether flags contains name, case-insensitively (IMAP
+// system flags are case-insensitive atoms).
+func hasFlag(flags []string, name string) bool {
+	for _, f := range flags {
+		if strings.EqualFold(f, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // FetchItems returns the IMAP FETCH data-item list for a retrieval mode.

@@ -293,6 +293,22 @@ func (c *Client) StoreLabels(uids []uint32, add bool, labels []string) error {
 	return err
 }
 
+// StoreFlags adds or removes IMAP system flags (e.g. `\Seen`) on the
+// given UIDs via UID STORE ... FLAGS. Flag names are sent unquoted since
+// IMAP flags are atoms, not strings.
+func (c *Client) StoreFlags(uids []uint32, add bool, flags []string) error {
+	if len(uids) == 0 || len(flags) == 0 {
+		return nil
+	}
+	op := "+FLAGS"
+	if !add {
+		op = "-FLAGS"
+	}
+	seq := joinUint32(uids, ",")
+	_, err := c.Cmd(fmt.Sprintf("UID STORE %s %s (%s)", seq, op, strings.Join(flags, " ")))
+	return err
+}
+
 func joinUint32(nums []uint32, sep string) string {
 	parts := make([]string, len(nums))
 	for i, n := range nums {

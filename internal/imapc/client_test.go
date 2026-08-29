@@ -142,3 +142,42 @@ func atoiMust(s string) int {
 	}
 	return n
 }
+
+func TestClientStoreFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		add  bool
+		want string
+	}{
+		{"add", true, `UID STORE 42,43 +FLAGS (\Seen)`},
+		{"remove", false, `UID STORE 42,43 -FLAGS (\Seen)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
+				if strings.Contains(cmd, "STORE") {
+					got = cmd[strings.IndexByte(cmd, ' ')+1:]
+					w.WriteString(tag(cmd) + " OK STORE completed\r\n")
+				}
+			})
+			if err := cl.StoreFlags([]uint32{42, 43}, tc.add, []string{`\Seen`}); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClientStoreFlagsNoop(t *testing.T) {
+	cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
+		t.Errorf("unexpected command %q", cmd)
+	})
+	if err := cl.StoreFlags(nil, true, []string{`\Seen`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.StoreFlags([]uint32{1}, true, nil); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1,9 +1,9 @@
 // Package imapc is a minimal hand-written IMAP4rev1 client sufficient for
 // gic's needs: LOGIN, LIST, SELECT, CREATE, UID SEARCH (incl. Gmail
 // X-GM-LABELS/X-GM-THRID/X-GM-RAW extensions), UID FETCH, UID STORE
-// (label add/remove), and APPEND. It intentionally avoids third-party IMAP
-// libraries so Gmail-specific extensions are easy to send as raw command
-// text.
+// (label and system-flag add/remove), and APPEND. It intentionally avoids
+// third-party IMAP libraries so Gmail-specific extensions are easy to send
+// as raw command text.
 package imapc
 
 import (

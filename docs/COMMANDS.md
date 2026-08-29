@@ -269,6 +269,8 @@ one-filter case, and internally maps to the same flag.
 | `--header <name>=<value>` | `--header X-GM-THRID=123456789` | `HEADER <name> <value>` |
 | `--since <date>` | `--since 2026-01-01` | `SINCE` |
 | `--until <date>` | `--until +5days` | `BEFORE` |
+| `--seen` | `--seen` | `SEEN` |
+| `--unseen` | `--unseen` | `UNSEEN` |
 
 Dates accept `YYYY-MM-DD` or one or more signed offsets from today. Supported
 units are `day`, `week`, `month`, and `year`, with singular or plural names.
@@ -286,7 +288,12 @@ gic search --from someone@x.com --label accountant --subject "Invoice"
 gic search --label accountant --label reviewed        # label=a OR label=b
 gic search --header X-GM-THRID=1234567890123456789
 gic search --since -1month -1week --until +1day
+gic search --unseen --label accountant                # unseen AND labeled
 ```
+
+`--seen`/`--unseen` filter on the IMAP `\Seen` system flag (what Gmail
+presents as read/unread) and are mutually exclusive; omitting both matches
+messages in either state. `--read`/`--unread` are accepted as aliases.
 
 Other flags:
 - `--all-mailboxes` — search across every mailbox instead of just
@@ -324,6 +331,8 @@ gic search label accountant --mode light
     "subject": "Invoice #123",
     "date": "2026-08-01T10:00:00Z",
     "labels": ["accountant", "INBOX"],
+    "flags": ["\\Seen"],
+    "seen": true,
     "size": 20481,
     "body": { "text": "...", "html": "..." },
     "raw": "<base64, only in full mode>"
@@ -331,8 +340,10 @@ gic search label accountant --mode light
 ]
 ```
 `body`/`raw` keys are present only for `standard`/`full` modes respectively.
-This JSON is meant to be piped into `gic label apply`, `gic fetch`, or
-`gic copy`.
+`flags` lists the raw IMAP system flags and `seen` is the convenience
+boolean for `\Seen` (what Gmail presents as read), available in every mode.
+This JSON is meant to be piped into `gic label apply`, `gic mark`,
+`gic fetch`, or `gic copy`.
 
 ---
 
@@ -360,7 +371,36 @@ Removes a label from messages (does not delete the label itself).
 
 ---
 
-## 6. `gic fetch` — download messages
+## 6. `gic mark` — set / clear the `\Seen` flag
+
+Adds or removes the IMAP `\Seen` system flag, which is what Gmail presents
+as read vs. unread. Like `gic label apply`, targets come from either
+`--uid` or `--stdin`.
+
+### `gic mark seen [--uid <uid>[,...] | --stdin]`
+Sets `\Seen` on the given messages (Gmail shows them as read).
+
+### `gic mark unseen [--uid <uid>[,...] | --stdin]`
+Clears `\Seen` on the given messages (Gmail shows them as unread).
+
+```
+gic mark seen --uid 4821,4900
+gic mark unseen --uid 4821
+
+# pipe search results straight in
+gic search --unseen --label accountant | gic mark seen --stdin
+gic search --from boss@x.com --seen | gic mark unseen --stdin
+```
+`--stdin` reads a JSON array (the `search` output shape) from stdin and
+marks every message in it. Both subcommands operate on the selected
+mailbox (`$GIC_MAILBOX`/`-m`, default `INBOX`), since IMAP flags are
+per-mailbox. Use `gic search`'s `seen` field (§4.3) to verify the result.
+
+`read`/`unread` are accepted as aliases for `seen`/`unseen`.
+
+---
+
+## 7. `gic fetch` — download messages
 
 ```
 gic fetch --uid 4821 -o ./out/4821.eml
@@ -372,7 +412,7 @@ single message.
 
 ---
 
-## 7. `gic copy` — cross-account copy
+## 8. `gic copy` — cross-account copy
 
 ```
 gic copy --from-account mauricioprado00 --to-account work \
@@ -397,7 +437,7 @@ Supports all `gic search` filter flags, plus:
 
 ---
 
-## 8. Global flags (all commands)
+## 9. Global flags (all commands)
 
 | Flag | Description |
 |---|---|
@@ -407,7 +447,7 @@ Supports all `gic search` filter flags, plus:
 
 ---
 
-## 9. Remaining open items
+## 10. Remaining open items
 
 - §1.1's **local/global account scope** design is new — please confirm:
   - Is walking up from CWD to find `accounts/` the right lookup (vs. only

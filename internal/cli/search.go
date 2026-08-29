@@ -73,6 +73,11 @@ func parseSearchArgs(args []string) (search.Filters, string, int, bool, error) {
 	fs.StringVar(&mode, "mode", "standard", "retrieval mode: light|standard|full")
 	fs.IntVar(&limit, "limit", 0, "cap number of results (0 = unlimited)")
 	fs.BoolVar(&allMailboxes, "all-mailboxes", false, "search across all mailboxes")
+	seenOnly := fs.Bool("seen", false, "only messages carrying the \\Seen flag")
+	unseenOnly := fs.Bool("unseen", false, "only messages without the \\Seen flag")
+	// Undocumented back-compat aliases for --seen/--unseen.
+	fs.BoolVar(seenOnly, "read", false, "alias for --seen")
+	fs.BoolVar(unseenOnly, "unread", false, "alias for --unseen")
 	if err := fs.Parse(normalizeTimeFilterArgs(args)); err != nil {
 		return f, mode, limit, allMailboxes, err
 	}
@@ -88,6 +93,12 @@ func parseSearchArgs(args []string) (search.Filters, string, int, bool, error) {
 			}
 			f.Header[parts[0]] = append(f.Header[parts[0]], parts[1])
 		}
+	}
+	if *seenOnly && *unseenOnly {
+		return f, mode, limit, allMailboxes, fmt.Errorf("--seen and --unseen are mutually exclusive")
+	}
+	if *seenOnly || *unseenOnly {
+		f.Seen = seenOnly
 	}
 	return f, mode, limit, allMailboxes, nil
 }

@@ -76,6 +76,9 @@ gic mailbox list
 gic search label accountant
 gic search --from a@x.com --label accountant
 gic search --since -1month -1week --until +1day
+gic search --unseen                                  # only unseen messages
+gic mark seen --uid 4821,4900                        # set \Seen
+gic search --unseen --label accountant | gic mark seen --stdin
 gic copy --from-account work --to-account personal --label accountant --dry-run
 ```
 
@@ -86,7 +89,8 @@ gic copy --from-account work --to-account personal --label accountant --dry-run
   split into separate text/html parts.
 - Hand-rolled minimal IMAP client (no third-party IMAP library) — covers
   LOGIN, LIST, SELECT, CREATE, UID SEARCH (incl. Gmail X-GM-LABELS/
-  X-GM-THRID extensions), UID FETCH, APPEND, and UID STORE for labels.
+  X-GM-THRID extensions), UID FETCH, APPEND, and UID STORE for labels and
+  system flags (`\Seen`).
 - Not yet tested against a live Gmail account (only unit-tested against
   fake in-process IMAP servers) — sandbox has no credentials to verify
   against. Please test `account add` / `search` / `copy` against a real
