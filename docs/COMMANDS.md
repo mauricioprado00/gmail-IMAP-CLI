@@ -456,6 +456,11 @@ original, rerunning the same command reuses that replacement instead of
 creating another copy. Any extra verified replacements from earlier retries
 are removed during recovery.
 
+Gmail derives `\All`, `\Sent` and `\Draft` from the message itself and rejects
+them on `STORE X-GM-LABELS`, so a replacement is not restored to Sent or
+Drafts. To keep a sent message in Sent, run the command with that mailbox
+selected (`-m "[Gmail]/Sent Mail"`) so the replacement is appended there.
+
 The replacement receives a new UID and Message-ID. The original Message-ID is
 retained in `X-GIC-Original-Message-ID`. The JSON result includes both the
 original `uid` and `replacementUid`, plus each removed attachment's decoded

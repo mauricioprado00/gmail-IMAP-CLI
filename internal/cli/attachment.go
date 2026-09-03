@@ -392,6 +392,12 @@ func appendableFlags(flags []string) []string {
 	return out
 }
 
+// mutableLabels returns the labels worth re-applying to a replacement:
+// everything except the mailbox it was appended to (which it already has) and
+// the Gmail system labels that UID STORE X-GM-LABELS cannot set. Gmail derives
+// \All from every message, and \Sent/\Draft from how the message was created,
+// so asking for them fails the whole STORE and costs the labels that would
+// have worked. \Trash would move the replacement straight to the bin.
 func mutableLabels(labels []string, selectedMailbox string) []string {
 	var out []string
 	for _, label := range labels {
@@ -399,7 +405,7 @@ func mutableLabels(labels []string, selectedMailbox string) []string {
 			continue
 		}
 		switch strings.ToLower(label) {
-		case `\all`, `\trash`:
+		case `\all`, `\trash`, `\sent`, `\draft`:
 			continue
 		default:
 			out = append(out, label)
