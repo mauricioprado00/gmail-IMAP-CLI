@@ -78,6 +78,26 @@ type Mailbox struct {
 	Flags []string
 }
 
+// HasCapability reports whether the server advertises an IMAP capability.
+func (c *Client) HasCapability(name string) (bool, error) {
+	resp, err := c.Cmd("CAPABILITY")
+	if err != nil {
+		return false, err
+	}
+	for _, line := range resp.Untagged {
+		fields := strings.Fields(line.Text)
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "CAPABILITY") {
+			continue
+		}
+		for _, capability := range fields[1:] {
+			if strings.EqualFold(capability, name) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // List returns all mailboxes/labels.
 func (c *Client) List() ([]Mailbox, error) {
 	resp, err := c.Cmd(`LIST "" "*"`)
@@ -188,14 +208,16 @@ func (c *Client) UIDSearch(criteria string) ([]uint32, error) {
 
 // FetchResult holds parsed FETCH data for one message.
 type FetchResult struct {
-	UID      uint32
-	Flags    []string
-	Labels   []string
-	ThreadID string
-	Size     int
-	Headers  []byte // raw header bytes (light/standard modes)
-	Text     []byte // raw BODY[TEXT] bytes (standard mode)
-	Raw      []byte // full raw RFC822 message (full mode)
+	UID            uint32
+	Flags          []string
+	Labels         []string
+	ThreadID       string
+	GmailMessageID string
+	Size           int
+	InternalDate   time.Time
+	Headers        []byte // raw header bytes (light/standard modes)
+	Text           []byte // raw BODY[TEXT] bytes (standard mode)
+	Raw            []byte // full raw RFC822 message (full mode)
 }
 
 // UIDFetch fetches `items` for the given UIDs. items is a raw IMAP fetch
@@ -238,9 +260,17 @@ func (c *Client) UIDFetch(uids []uint32, items string) ([]FetchResult, error) {
 		if v, ok := m["X-GM-THRID"].(string); ok {
 			fr.ThreadID = v
 		}
+		if v, ok := m["X-GM-MSGID"].(string); ok {
+			fr.GmailMessageID = v
+		}
 		if v, ok := m["RFC822.SIZE"].(string); ok {
 			if n, err := strconv.Atoi(v); err == nil {
 				fr.Size = n
+			}
+		}
+		if v, ok := m["INTERNALDATE"].(string); ok {
+			if date, err := time.Parse("02-Jan-2006 15:04:05 -0700", v); err == nil {
+				fr.InternalDate = date
 			}
 		}
 		for k, v := range m {
@@ -263,15 +293,32 @@ func (c *Client) UIDFetch(uids []uint32, items string) ([]FetchResult, error) {
 }
 
 // Append uploads a raw RFC822 message into mailbox, preserving flags and
-// internal date.
-func (c *Client) Append(mailbox string, flags []string, date time.Time, raw []byte) error {
+// internal date. The returned UID is zero when the server omits APPENDUID.
+func (c *Client) Append(mailbox string, flags []string, date time.Time, raw []byte) (uint32, error) {
 	prefix := fmt.Sprintf("APPEND %s", quote(mailbox))
 	if len(flags) > 0 {
 		prefix += " (" + strings.Join(flags, " ") + ")"
 	}
 	prefix += " " + quote(date.Format("02-Jan-2006 15:04:05 -0700"))
-	_, err := c.CmdLiteral(prefix, raw)
-	return err
+	resp, err := c.CmdLiteral(prefix, raw)
+	if err != nil {
+		return 0, err
+	}
+	return parseAppendUID(resp.Text), nil
+}
+
+func parseAppendUID(text string) uint32 {
+	start := strings.Index(strings.ToUpper(text), "[APPENDUID ")
+	if start == -1 {
+		return 0
+	}
+	fields := strings.Fields(text[start+1:])
+	if len(fields) < 3 {
+		return 0
+	}
+	value := strings.TrimRight(fields[2], "]")
+	uid, _ := strconv.ParseUint(value, 10, 32)
+	return uint32(uid)
 }
 
 // StoreLabels adds or removes Gmail labels on the given UIDs via
@@ -306,6 +353,15 @@ func (c *Client) StoreFlags(uids []uint32, add bool, flags []string) error {
 	}
 	seq := joinUint32(uids, ",")
 	_, err := c.Cmd(fmt.Sprintf("UID STORE %s %s (%s)", seq, op, strings.Join(flags, " ")))
+	return err
+}
+
+// UIDExpunge permanently removes only messages already carrying \Deleted.
+func (c *Client) UIDExpunge(uids []uint32) error {
+	if len(uids) == 0 {
+		return nil
+	}
+	_, err := c.Cmd("UID EXPUNGE " + joinUint32(uids, ","))
 	return err
 }
 

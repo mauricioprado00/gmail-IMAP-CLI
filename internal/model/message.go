@@ -101,7 +101,7 @@ func FetchItems(mode string) string {
 	case "light":
 		return "UID FLAGS X-GM-LABELS X-GM-THRID RFC822.SIZE " + headerFields
 	case "full":
-		return "UID FLAGS X-GM-LABELS X-GM-THRID RFC822.SIZE BODY.PEEK[]"
+		return "UID FLAGS X-GM-LABELS X-GM-THRID X-GM-MSGID RFC822.SIZE INTERNALDATE BODY.PEEK[]"
 	default: // "standard"
 		return "UID FLAGS X-GM-LABELS X-GM-THRID RFC822.SIZE " + headerFields + " BODY.PEEK[TEXT]"
 	}

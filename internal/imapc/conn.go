@@ -138,8 +138,8 @@ func (c *Conn) Cmd(command string) (*Response, error) {
 // CmdLiteral sends a command whose single argument is a literal (used for
 // APPEND, where the message body may contain characters unsafe to quote).
 // argPrefix/argSuffix bracket the literal in the command line, e.g.
-// APPEND `"INBOX" (\Seen) {n}` then raw bytes then `` (suffix empty, IMAP
-// closes the command with CRLF after the literal bytes).
+// APPEND `"INBOX" (\Seen) {n}` followed by the raw bytes (the suffix is empty;
+// the client closes the command with CRLF after the literal bytes).
 func (c *Conn) CmdLiteral(cmdPrefix string, literal []byte) (*Response, error) {
 	tag := c.nextTag()
 	header := fmt.Sprintf("%s %s {%d}\r\n", tag, cmdPrefix, len(literal))

@@ -74,12 +74,26 @@ func TestClientUIDSearch(t *testing.T) {
 	}
 }
 
+func TestClientHasCapability(t *testing.T) {
+	cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
+		w.WriteString("* CAPABILITY IMAP4rev1 UIDPLUS X-GM-EXT-1\r\n")
+		w.WriteString(tag(cmd) + " OK CAPABILITY completed\r\n")
+	})
+	got, err := cl.HasCapability("uidplus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Fatal("UIDPLUS capability not found")
+	}
+}
+
 func TestClientUIDFetch(t *testing.T) {
 	cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
 		switch {
 		case strings.Contains(cmd, "FETCH"):
 			body := "From: a@x.com\r\nSubject: Hi\r\n"
-			w.WriteString("* 1 FETCH (UID 42 FLAGS (\\Seen) X-GM-LABELS (accountant) RFC822.SIZE 31 BODY[HEADER.FIELDS (FROM SUBJECT)] {" + itoa(len(body)) + "}\r\n" + body + ")\r\n")
+			w.WriteString("* 1 FETCH (UID 42 FLAGS (\\Seen) X-GM-LABELS (accountant) X-GM-MSGID 987654 INTERNALDATE \"01-Jan-2026 12:30:00 +0000\" RFC822.SIZE 31 BODY[HEADER.FIELDS (FROM SUBJECT)] {" + itoa(len(body)) + "}\r\n" + body + ")\r\n")
 			w.WriteString(tag(cmd) + " OK FETCH completed\r\n")
 		}
 	})
@@ -91,7 +105,8 @@ func TestClientUIDFetch(t *testing.T) {
 		t.Fatalf("got %d results", len(frs))
 	}
 	fr := frs[0]
-	if fr.UID != 42 || fr.Size != 31 || len(fr.Labels) != 1 || fr.Labels[0] != "accountant" {
+	if fr.UID != 42 || fr.Size != 31 || fr.GmailMessageID != "987654" ||
+		fr.InternalDate.IsZero() || len(fr.Labels) != 1 || fr.Labels[0] != "accountant" {
 		t.Errorf("got %+v", fr)
 	}
 	if !strings.Contains(string(fr.Headers), "Subject: Hi") {
@@ -114,12 +129,36 @@ func TestClientAppend(t *testing.T) {
 			w.WriteString(tag(cmd) + " OK APPEND completed\r\n")
 		}
 	})
-	err := cl.Append("INBOX", nil, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []byte("raw message body"))
+	uid, err := cl.Append("INBOX", nil, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), []byte("raw message body"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if uid != 0 {
+		t.Errorf("UID = %d, want 0 without APPENDUID", uid)
+	}
 	if gotLiteral != "raw message body" {
 		t.Errorf("server got literal %q", gotLiteral)
+	}
+}
+
+func TestClientAppendReturnsUID(t *testing.T) {
+	cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
+		if strings.Contains(cmd, "APPEND") {
+			w.WriteString("+ go ahead\r\n")
+			w.Flush()
+			i := strings.LastIndexByte(cmd, '{')
+			j := strings.LastIndexByte(cmd, '}')
+			n := atoiMust(cmd[i+1 : j])
+			io.ReadFull(r, make([]byte, n+2))
+			w.WriteString(tag(cmd) + " OK [APPENDUID 7 1234] APPEND completed\r\n")
+		}
+	})
+	uid, err := cl.Append("INBOX", nil, time.Now(), []byte("message"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 1234 {
+		t.Errorf("UID = %d, want 1234", uid)
 	}
 }
 
@@ -170,6 +209,20 @@ func TestClientStoreFlags(t *testing.T) {
 	}
 }
 
+func TestClientStoreLabels(t *testing.T) {
+	var got string
+	cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
+		got = cmd[strings.IndexByte(cmd, ' ')+1:]
+		w.WriteString(tag(cmd) + " OK STORE completed\r\n")
+	})
+	if err := cl.StoreLabels([]uint32{42}, true, []string{`\Trash`, "project"}); err != nil {
+		t.Fatal(err)
+	}
+	if got != `UID STORE 42 +X-GM-LABELS ("\\Trash" "project")` {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestClientStoreFlagsNoop(t *testing.T) {
 	cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
 		t.Errorf("unexpected command %q", cmd)
@@ -179,5 +232,19 @@ func TestClientStoreFlagsNoop(t *testing.T) {
 	}
 	if err := cl.StoreFlags([]uint32{1}, true, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClientUIDExpunge(t *testing.T) {
+	var got string
+	cl := newTestClient(t, func(cmd string, w *bufio.Writer, r *bufio.Reader) {
+		got = cmd[strings.IndexByte(cmd, ' ')+1:]
+		w.WriteString(tag(cmd) + " OK EXPUNGE completed\r\n")
+	})
+	if err := cl.UIDExpunge([]uint32{42, 43}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "UID EXPUNGE 42,43" {
+		t.Errorf("got %q", got)
 	}
 }

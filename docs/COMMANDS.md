@@ -412,7 +412,63 @@ single message.
 
 ---
 
-## 8. `gic copy` — cross-account copy
+## 8. `gic attachment remove` — remove attachments
+
+Removes all attachments or only attachments with specified filenames from
+one or more messages:
+
+```sh
+# Preview every attachment that would be removed.
+gic attachment remove --uid 4821 --all --dry-run
+
+# Remove every attachment.
+gic attachment remove --uid 4821 --all
+
+# Remove selected filenames (case-insensitive exact matches).
+gic attachment remove --uid 4821 \
+  --name IMG_20210606_115119.jpg \
+  --name video.mp4
+
+# Consume normal search-result JSON.
+gic search --subject "Old files" --mode light |
+  gic attachment remove --stdin --all --dry-run
+```
+
+Exactly one selection mode is required: `--all`, or one or more repeatable
+`--name` flags. `--uid` and `--stdin` select messages in the current mailbox
+(`$GIC_MAILBOX`/`-m`, default `INBOX`). UIDs are mailbox-specific, so use the
+same mailbox that produced the search results.
+
+For each changed message, gic:
+
+1. Downloads the full MIME message.
+2. Removes the selected attachment parts.
+3. Adds one visible line per removed file at the end of the message, such as
+   `IMG_20210606_115119.jpg removed with gic`.
+4. Gives the replacement a unique Message-ID and trace header, then appends it
+   with the original internal date, flags, and mutable Gmail labels.
+5. Fetches the replacement back and verifies its UID, size, and trace header.
+6. Permanently removes the original through Gmail's All Mail and Trash
+   mailboxes only after the replacement and labels succeed.
+
+If a previous run created and verified a replacement but could not remove the
+original, rerunning the same command reuses that replacement instead of
+creating another copy. Any extra verified replacements from earlier retries
+are removed during recovery.
+
+The replacement receives a new UID and Message-ID. The original Message-ID is
+retained in `X-GIC-Original-Message-ID`. The JSON result includes both the
+original `uid` and `replacementUid`, plus each removed attachment's decoded
+size and an `attachmentsRemoved` count.
+`--dry-run` performs no APPEND, STORE, or EXPUNGE operations.
+
+This operation requires the server's `UIDPLUS` extension so gic can identify
+the replacement and expunge only the original message. If replacement cleanup
+fails, gic reports the error rather than silently claiming success.
+
+---
+
+## 9. `gic copy` — cross-account copy
 
 ```
 gic copy --from-account mauricioprado00 --to-account work \
@@ -437,7 +493,7 @@ Supports all `gic search` filter flags, plus:
 
 ---
 
-## 9. Global flags (all commands)
+## 10. Global flags (all commands)
 
 | Flag | Description |
 |---|---|
@@ -447,7 +503,7 @@ Supports all `gic search` filter flags, plus:
 
 ---
 
-## 10. Remaining open items
+## 11. Remaining open items
 
 - §1.1's **local/global account scope** design is new — please confirm:
   - Is walking up from CWD to find `accounts/` the right lookup (vs. only

@@ -79,6 +79,7 @@ gic search --since -1month -1week --until +1day
 gic search --unseen                                  # only unseen messages
 gic mark seen --uid 4821,4900                        # set \Seen
 gic search --unseen --label accountant | gic mark seen --stdin
+gic attachment remove --uid 4821 --all --dry-run     # preview attachment removal
 gic copy --from-account work --to-account personal --label accountant --dry-run
 ```
 
@@ -90,7 +91,8 @@ gic copy --from-account work --to-account personal --label accountant --dry-run
 - Hand-rolled minimal IMAP client (no third-party IMAP library) — covers
   LOGIN, LIST, SELECT, CREATE, UID SEARCH (incl. Gmail X-GM-LABELS/
   X-GM-THRID extensions), UID FETCH, APPEND, and UID STORE for labels and
-  system flags (`\Seen`).
+  system flags (`\Seen`), plus UIDPLUS replacement operations used by
+  `attachment remove`.
 - Not yet tested against a live Gmail account (only unit-tested against
   fake in-process IMAP servers) — sandbox has no credentials to verify
   against. Please test `account add` / `search` / `copy` against a real

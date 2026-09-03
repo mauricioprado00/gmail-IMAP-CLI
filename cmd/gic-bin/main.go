@@ -122,6 +122,18 @@ func main() {
 			usage()
 			os.Exit(1)
 		}
+	case "attachment":
+		if len(rest) == 0 {
+			usage()
+			os.Exit(1)
+		}
+		switch rest[0] {
+		case "remove":
+			cli.AttachmentRemove(rest[1:], g)
+		default:
+			usage()
+			os.Exit(1)
+		}
 	case "fetch":
 		cli.Fetch(rest, g)
 	case "copy":
@@ -186,6 +198,7 @@ Commands:
   label remove <name> [--uid..|--stdin]
   mark seen [--uid..|--stdin]      set \Seen (mark as read)
   mark unseen [--uid..|--stdin]    clear \Seen (mark as unread)
+  attachment remove [--uid..|--stdin] (--all|--name <filename>)
   fetch [--uid..|--stdin] -o <path> download raw messages
   copy --from-account A --to-account B [filters...]
   shell-init                       print the shell function wrapper

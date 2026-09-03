@@ -155,7 +155,7 @@ func Copy(args []string) {
 		if t, err := mail.ParseDate(m.Date); err == nil {
 			date = t
 		}
-		if err := dstCl.Append(*toMailbox, nil, date, fr.Raw); err != nil {
+		if _, err := dstCl.Append(*toMailbox, nil, date, fr.Raw); err != nil {
 			res.Status = "failed"
 			res.Error = err.Error()
 			summary.Failed++
