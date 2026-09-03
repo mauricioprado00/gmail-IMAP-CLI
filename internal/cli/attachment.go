@@ -274,7 +274,7 @@ func replaceMessageAttachments(cl *imapc.Client, mailbox, allMail, trash string,
 		if replacementUID == fr.UID {
 			return replacementUID, fmt.Errorf("server returned the original UID for the replacement; original message was retained")
 		}
-		if err := verifyReplacement(cl, replacementUID, marker, len(rewritten)); err != nil {
+		if err := verifyReplacement(cl, replacementUID, marker); err != nil {
 			cleanupErr := deleteSelectedMessage(cl, replacementUID)
 			if cleanupErr != nil {
 				return replacementUID, fmt.Errorf("verifying replacement: %v; removing invalid replacement: %v", err, cleanupErr)
@@ -308,19 +308,18 @@ func replaceMessageAttachments(cl *imapc.Client, mailbox, allMail, trash string,
 	return replacementUID, nil
 }
 
-func verifyReplacement(cl *imapc.Client, uid uint32, marker string, expectedSize int) error {
-	frs, err := cl.UIDFetch([]uint32{uid}, "UID RFC822.SIZE BODY.PEEK[HEADER.FIELDS (X-GIC-ATTACHMENTS-REMOVED)]")
+// verifyReplacement confirms the appended message is the one gic built, by
+// looking for its unique marker. The stored size is deliberately not compared
+// against the appended byte count: servers may normalize a message on APPEND.
+func verifyReplacement(cl *imapc.Client, uid uint32, marker string) error {
+	frs, err := cl.UIDFetch([]uint32{uid}, "UID BODY.PEEK[HEADER.FIELDS (X-GIC-ATTACHMENTS-REMOVED)]")
 	if err != nil {
 		return err
 	}
 	if len(frs) != 1 {
 		return fmt.Errorf("replacement UID %d was not found", uid)
 	}
-	if frs[0].Size != expectedSize {
-		return fmt.Errorf("replacement size is %d bytes, expected %d", frs[0].Size, expectedSize)
-	}
-	if !strings.Contains(string(frs[0].Headers), "X-Gic-Attachments-Removed: "+marker) &&
-		!strings.Contains(string(frs[0].Headers), "X-GIC-Attachments-Removed: "+marker) {
+	if !strings.Contains(strings.ToLower(string(frs[0].Headers)), marker) {
 		return fmt.Errorf("replacement marker was not found")
 	}
 	return nil

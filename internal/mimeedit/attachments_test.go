@@ -99,3 +99,45 @@ func TestRemoveNestedAttachmentAddsNoticeToAlternative(t *testing.T) {
 		t.Errorf("notice missing:\n%s", got)
 	}
 }
+
+// Some mailers put a name parameter on the message body itself. Removing it
+// would delete the message text, so a bare name is not enough to make a
+// displayable text part an attachment.
+func TestRemoveAllKeepsNamedBodyPart(t *testing.T) {
+	raw := strings.Replace(testMessage,
+		"Content-Type: text/plain; charset=utf-8\r\n\r\nHello",
+		"Content-Type: text/plain; charset=utf-8; name=\"message.txt\"\r\n\r\nHello",
+		1,
+	)
+	got, removed, _, err := RemoveAttachments([]byte(raw), func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 2 {
+		t.Fatalf("removed = %+v, want only the two real attachments", removed)
+	}
+	for _, attachment := range removed {
+		if attachment.Name == "message.txt" {
+			t.Fatalf("message body was removed as an attachment:\n%s", got)
+		}
+	}
+	if !bytes.Contains(got, []byte("Hello")) {
+		t.Errorf("message body text lost:\n%s", got)
+	}
+}
+
+// A text part explicitly marked as an attachment is still removable.
+func TestRemoveTextAttachmentWithDisposition(t *testing.T) {
+	raw := strings.Replace(testMessage,
+		"Content-Type: application/pdf; name=\"keep.pdf\"\r\nContent-Disposition: attachment; filename=\"keep.pdf\"\r\n\r\nPDF",
+		"Content-Type: text/plain; charset=utf-8\r\nContent-Disposition: attachment; filename=\"notes.txt\"\r\n\r\nnotes",
+		1,
+	)
+	_, removed, _, err := RemoveAttachments([]byte(raw), func(name string) bool { return name == "notes.txt" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0].Name != "notes.txt" {
+		t.Fatalf("removed = %+v", removed)
+	}
+}

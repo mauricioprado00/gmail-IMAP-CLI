@@ -212,9 +212,13 @@ func writeMultipart(boundary string, parts []mimePart) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// attachmentName returns a part's decoded filename and whether the part is an
+// attachment. A bare name/filename parameter alone does not promote a
+// displayable text part: some mailers put a name on the message body itself,
+// and treating that as an attachment would delete the message text.
 func attachmentName(h textproto.MIMEHeader) (string, bool) {
 	disposition, dispParams, _ := mime.ParseMediaType(h.Get("Content-Disposition"))
-	_, typeParams, _ := mime.ParseMediaType(h.Get("Content-Type"))
+	mediaType, typeParams, _ := mime.ParseMediaType(h.Get("Content-Type"))
 	name := dispParams["filename"]
 	if name == "" {
 		name = typeParams["name"]
@@ -222,7 +226,20 @@ func attachmentName(h textproto.MIMEHeader) (string, bool) {
 	if decoded, err := new(mime.WordDecoder).DecodeHeader(name); err == nil {
 		name = decoded
 	}
-	return name, strings.EqualFold(disposition, "attachment") || name != ""
+	if strings.EqualFold(disposition, "attachment") {
+		return name, true
+	}
+	return name, name != "" && !displayableText(mediaType)
+}
+
+// displayableText reports whether a media type is one a mail client renders as
+// the message body. An absent Content-Type defaults to text/plain.
+func displayableText(mediaType string) bool {
+	switch strings.ToLower(mediaType) {
+	case "", "text/plain", "text/html":
+		return true
+	}
+	return false
 }
 
 func decodedSize(h textproto.MIMEHeader, body []byte) int {
@@ -325,7 +342,7 @@ func addNoticeToText(h textproto.MIMEHeader, body []byte, notice string) ([]byte
 		rewritten, err := addNotice(h, body, notice)
 		return rewritten, err == nil, err
 	}
-	if mediaType != "text/plain" && mediaType != "text/html" {
+	if !displayableText(mediaType) {
 		return body, false, nil
 	}
 	charset := strings.ToLower(params["charset"])

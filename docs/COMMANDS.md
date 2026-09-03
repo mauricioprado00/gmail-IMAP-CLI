@@ -447,7 +447,7 @@ For each changed message, gic:
    `IMG_20210606_115119.jpg removed with gic`.
 4. Gives the replacement a unique Message-ID and trace header, then appends it
    with the original internal date, flags, and mutable Gmail labels.
-5. Fetches the replacement back and verifies its UID, size, and trace header.
+5. Fetches the replacement back and verifies its UID and trace header.
 6. Permanently removes the original through Gmail's All Mail and Trash
    mailboxes only after the replacement and labels succeed.
 
