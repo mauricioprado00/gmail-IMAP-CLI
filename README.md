@@ -1,4 +1,4 @@
-# gic — Gmail IMAP CLI
+# gic — Gmail CLI
 
 See [`docs/COMMANDS.md`](docs/COMMANDS.md) for the full command reference.
 
@@ -80,19 +80,25 @@ gic search --unseen                                  # only unseen messages
 gic mark seen --uid 4821,4900                        # set \Seen
 gic search --unseen --label accountant | gic mark seen --stdin
 gic attachment remove --uid 4821 --all --dry-run     # preview attachment removal
+gic send --to a@x.com --subject "Hi" --body "Hello"  # send over SMTP
+gic reply --uid 4821 --body "Thanks" --dry-run       # preview a reply (no connection)
+gic forward --uid 4821 --to a@x.com --note "FYI"
 gic copy --from-account work --to-account personal --label accountant --dry-run
 ```
 
 ## Status / limitations
 
-- Auth is Gmail App Passwords only (no OAuth2).
+- Auth is Gmail App Passwords only (no OAuth2), for both IMAP and SMTP.
+- `send`/`reply`/`forward` go over SMTP (`smtp.gmail.com:465` by default,
+  STARTTLS on any other port) and bypass the pooling daemon. Gmail places sent
+  mail in Sent Mail itself; replies quote only the first `text/plain` part.
 - `--mode standard`'s `body.text` is the raw `BODY[TEXT]` MIME section, not
   split into separate text/html parts.
 - Hand-rolled minimal IMAP client (no third-party IMAP library) — covers
   LOGIN, LIST, SELECT, CREATE, UID SEARCH (incl. Gmail X-GM-LABELS/
   X-GM-THRID extensions), UID FETCH, APPEND, and UID STORE for labels and
   system flags (`\Seen`), plus UIDPLUS replacement operations used by
-  `attachment remove`.
+  `attachment remove`. Sending uses the standard library's `net/smtp`.
 - Not yet tested against a live Gmail account (only unit-tested against
   fake in-process IMAP servers) — sandbox has no credentials to verify
   against. Please test `account add` / `search` / `copy` against a real

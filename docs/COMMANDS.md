@@ -1,7 +1,8 @@
-# gic — Gmail IMAP CLI
+# gic — Gmail CLI
 
 `gic` is a Go CLI for searching, labeling, and copying email between Gmail
-accounts over IMAP (App Password auth). This is v2 of the spec, updated
+accounts over IMAP, and for sending, replying to and forwarding mail over
+SMTP (App Password auth for both). This is v2 of the spec, updated
 per your answers. Anything still marked **[PROPOSAL]** is a design filling a
 gap — flag it if you want it changed. Nothing is implemented yet.
 
@@ -29,12 +30,19 @@ Each Gmail account's config/secrets live in one JSON file, named
   "email": "mauricioprado00@gmail.com",
   "imapHost": "imap.gmail.com",
   "imapPort": 993,
+  "smtpHost": "smtp.gmail.com",
+  "smtpPort": 465,
   "appPassword": "xxxx xxxx xxxx xxxx",
   "scope": "local",
   "createdAt": "2026-08-28T09:00:00Z",
   "updatedAt": "2026-08-28T09:00:00Z"
 }
 ```
+`smtpHost`/`smtpPort` are optional: when absent (account files written
+before sending existed) they default to `smtp.gmail.com:465`. Port 465 is
+implicit TLS; any other port (e.g. 587) is plain TCP upgraded with
+`STARTTLS`. The same App Password authenticates both IMAP and SMTP.
+
 **[PROPOSAL]**: add a `scope` field to the JSON itself (redundant with
 *where* the file lives, but handy for `account list --json` and for sanity
 checks if a file is ever copied between the two directories by hand).
@@ -498,17 +506,127 @@ Supports all `gic search` filter flags, plus:
 
 ---
 
-## 10. Global flags (all commands)
+## 10. `gic send` / `gic reply` / `gic forward` — send mail
+
+Sends mail over SMTP with the selected account's credentials. Gmail files
+anything sent through its SMTP server into `[Gmail]/Sent Mail` on its own, so
+no IMAP `APPEND` step is involved. SMTP sessions are short-lived and go
+straight to the server — they never pass through the connection-pooling
+daemon. The `From` address is always the account's email.
+
+Everything here is irreversible once the server accepts the message, so all
+three commands take `--dry-run`, which builds the full RFC 5322 message and
+prints it to stdout **without connecting to anything**. Recipients are only
+ever taken from flags, never from stdin, so a mis-piped search result can
+never fan out mail.
+
+### `gic send`
+
+```sh
+gic send --to a@x.com --subject "Invoice" --body "Attached."
+gic send --to a@x.com --to b@x.com --cc c@x.com --bcc me@x.com \
+  --subject "Report" --body-file report.txt --attach report.pdf --attach chart.png
+cat body.txt | gic send --to a@x.com --subject "Notes" --body-file -
+gic send --to a@x.com --subject "Test" --body "Hello" --dry-run > preview.eml
+```
+
+| Flag | Description |
+|---|---|
+| `--to <addr>` | Recipient (repeatable; a value may also be a comma-separated list). At least one `--to`, `--cc` or `--bcc` is required. Accepts `Name <addr>` form. |
+| `--cc <addr>` | Carbon-copy recipient (repeatable). |
+| `--bcc <addr>` | Blind recipient (repeatable). Included in the SMTP envelope, omitted from the headers. |
+| `--subject <text>` | Subject (UTF-8 is RFC 2047-encoded when needed). |
+| `--body <text>` | Plain-text body. Mutually exclusive with `--body-file`. |
+| `--body-file <path>` | Read the plain-text body from a file; `-` reads stdin. |
+| `--attach <path>` | Attach a file (repeatable). Content type is sniffed from the extension, falling back to `application/octet-stream`. |
+| `--dry-run` | Print the message to stdout instead of sending. |
+
+The body is sent as `text/plain; charset=utf-8` (quoted-printable). With
+attachments the message becomes `multipart/mixed` with base64 parts. A fresh
+`Message-ID` of the form `<random@gic>` is always generated.
+
+On success gic prints a JSON summary:
+```json
+{
+  "status": "sent",
+  "messageId": "4f1c...@gic",
+  "from": "mauricioprado00@gmail.com",
+  "recipients": ["a@x.com", "c@x.com", "me@x.com"],
+  "size": 1234
+}
+```
+
+### `gic reply --uid <uid>`
+
+```sh
+gic reply --uid 4821 --body "Thanks, received."
+gic reply --uid 4821 --all --body-file answer.txt
+gic -m "[Gmail]/All Mail" reply --uid 4821 --body "ok" --dry-run
+```
+
+Fetches the single message `--uid` from the current mailbox (`$GIC_MAILBOX`/
+`-m`, default `INBOX`) and builds a reply:
+
+- **To** is the original `Reply-To`, or `From` when there is none.
+- `--all` additionally copies the original `To` and `Cc` into `Cc`, dropping
+  the account's own address and any duplicates.
+- Extra `--to`/`--cc`/`--bcc` flags are added on top.
+- **Subject** is the original prefixed with `Re: ` unless it already starts
+  with `Re:` (case-insensitive).
+- `In-Reply-To` is the original `Message-ID`; `References` is the original
+  `References` plus its `Message-ID`, so Gmail threads the reply.
+- The original's first `text/plain` part is quoted below the body as
+  `On <date>, <from> wrote:` followed by `> `-prefixed lines. `--no-quote`
+  omits it. HTML-only originals are not converted; the reply simply carries
+  no quote.
+- `--body`/`--body-file`/`--attach`/`--dry-run` behave as in `gic send`.
+
+After the server accepts the reply, gic sets `\Answered` on the original
+(the flag Gmail shows as the replied arrow). A failure to set the flag is
+reported but does not undo the send — it cannot.
+
+### `gic forward --uid <uid>`
+
+```sh
+gic forward --uid 4821 --to a@x.com
+gic forward --uid 4821 --to a@x.com --note "FYI, see below."
+gic forward --uid 4821 --to a@x.com --as-attachment
+```
+
+Fetches the single message `--uid` and forwards it to the given recipients
+(at least one `--to`/`--cc`/`--bcc` is required):
+
+- **Subject** is the original prefixed with `Fwd: ` unless it already starts
+  with `Fwd:`/`Fw:` (case-insensitive).
+- **Default (inline)**: the body is the optional `--note` text, a
+  `---------- Forwarded message ----------` block with the original `From`,
+  `Date`, `Subject` and `To`, and the original's first `text/plain` part. The
+  original's attachment parts are carried over verbatim (same headers and
+  encoded bytes, so nothing is re-encoded). HTML-only originals forward with
+  an empty text section; use `--as-attachment` for those.
+- `--as-attachment`: the whole original is attached untouched as a
+  `message/rfc822` part, with `--note` as the text part. This is the
+  lossless option.
+- `--attach` adds further files; `--dry-run` previews.
+
+### Verbose tracing
+
+`-v` prints the SMTP dialogue to stderr like the IMAP trace. The `AUTH PLAIN`
+line is redacted so the App Password never lands in a terminal scrollback.
+
+---
+
+## 11. Global flags (all commands)
 
 | Flag | Description |
 |---|---|
 | `-s <alias\|N>` | One-off account override (§1.3) |
 | `-m, --mailbox <name>` | One-off mailbox override (§1.3) |
-| `-v, --verbose` | Print IMAP protocol trace to stderr |
+| `-v, --verbose` | Print IMAP/SMTP protocol trace to stderr |
 
 ---
 
-## 11. Remaining open items
+## 12. Remaining open items
 
 - §1.1's **local/global account scope** design is new — please confirm:
   - Is walking up from CWD to find `accounts/` the right lookup (vs. only
