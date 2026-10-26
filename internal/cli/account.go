@@ -9,6 +9,7 @@ import (
 
 	"gic/internal/account"
 	"gic/internal/imapc"
+	"gic/internal/smtpc"
 
 	"golang.org/x/term"
 )
@@ -60,6 +61,8 @@ func AccountAdd(args []string) {
 		Email:       email,
 		IMAPHost:    "imap.gmail.com",
 		IMAPPort:    993,
+		SMTPHost:    account.DefaultSMTPHost,
+		SMTPPort:    account.DefaultSMTPPort,
 		AppPassword: password,
 		Scope:       scope,
 	}
@@ -74,6 +77,11 @@ func AccountAdd(args []string) {
 	cl.Logout()
 	cl.Close()
 	fmt.Printf("\u2713 Verified IMAP login for %s\n", email)
+
+	if err := smtpc.Verify(a.SMTPHost, a.SMTPPort, a.Email, a.AppPassword); err != nil {
+		exitErr(fmt.Errorf("could not verify SMTP login: %w", err))
+	}
+	fmt.Printf("\u2713 Verified SMTP login for %s\n", email)
 
 	if err := account.Save(a); err != nil {
 		exitErr(err)

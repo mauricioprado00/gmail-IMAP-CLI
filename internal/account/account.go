@@ -33,6 +33,8 @@ type Account struct {
 	Email       string    `json:"email"`
 	IMAPHost    string    `json:"imapHost"`
 	IMAPPort    int       `json:"imapPort"`
+	SMTPHost    string    `json:"smtpHost,omitempty"`
+	SMTPPort    int       `json:"smtpPort,omitempty"`
 	AppPassword string    `json:"appPassword"`
 	Scope       Scope     `json:"scope,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
@@ -42,6 +44,26 @@ type Account struct {
 	// saved to); not serialized. Set by Load/List, and by ResolveDir for
 	// newly-created accounts.
 	dir string `json:"-"`
+}
+
+// Gmail SMTP defaults, used when an account file predates sending and has
+// no smtpHost/smtpPort of its own (docs/COMMANDS.md §1.1).
+const (
+	DefaultSMTPHost = "smtp.gmail.com"
+	DefaultSMTPPort = 465
+)
+
+// SMTP returns the SMTP endpoint for the account, falling back to the Gmail
+// defaults field by field when the account file does not set them.
+func (a *Account) SMTP() (host string, port int) {
+	host, port = a.SMTPHost, a.SMTPPort
+	if host == "" {
+		host = DefaultSMTPHost
+	}
+	if port == 0 {
+		port = DefaultSMTPPort
+	}
+	return host, port
 }
 
 // GlobalDir returns `~/.config/gic/accounts`.

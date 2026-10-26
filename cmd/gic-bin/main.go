@@ -138,6 +138,12 @@ func main() {
 		cli.Fetch(rest, g)
 	case "copy":
 		cli.Copy(rest)
+	case "send":
+		cli.Send(rest, g)
+	case "reply":
+		cli.Reply(rest, g)
+	case "forward":
+		cli.Forward(rest, g)
 	case "shell-init":
 		cli.ShellInit()
 	default:
@@ -178,7 +184,7 @@ func runDaemon(args []string) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `gic - Gmail IMAP CLI
+	fmt.Fprintln(os.Stderr, `gic - Gmail CLI
 
 Usage: gic [-s <alias|N>] [-m <mailbox>] [-v] <command> [args...]
 
@@ -201,6 +207,9 @@ Commands:
   attachment remove [--uid..|--stdin] (--all|--name <filename>)
   fetch [--uid..|--stdin] -o <path> download raw messages
   copy --from-account A --to-account B [filters...]
+  send --to <addr> --subject <s> (--body <t>|--body-file <f>) [--attach <f>] [--dry-run]
+  reply --uid <uid> [--all] (--body <t>|--body-file <f>) [--no-quote] [--dry-run]
+  forward --uid <uid> --to <addr> [--note <t>] [--as-attachment] [--dry-run]
   shell-init                       print the shell function wrapper
 
 See docs/COMMANDS.md for full details.`)
