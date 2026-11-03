@@ -33,6 +33,7 @@ type SendSummary struct {
 type sendFlags struct {
 	to, cc, bcc multiFlag
 	attach      multiFlag
+	invite      string
 	subject     string
 	body        string
 	bodyFile    string
@@ -44,6 +45,7 @@ func (f *sendFlags) register(fs *flag.FlagSet, bodyFlag string) {
 	fs.Var(&f.cc, "cc", "carbon-copy recipient (repeatable)")
 	fs.Var(&f.bcc, "bcc", "blind recipient (repeatable; envelope only)")
 	fs.Var(&f.attach, "attach", "file to attach (repeatable)")
+	fs.StringVar(&f.invite, "invite", "", "iCalendar file sent as an inline invitation (text/calendar with its METHOD)")
 	fs.StringVar(&f.body, bodyFlag, "", "plain-text body")
 	fs.StringVar(&f.bodyFile, bodyFlag+"-file", "", "read the body from a file; - for stdin")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the message to stdout instead of sending")
@@ -243,7 +245,14 @@ func (f *sendFlags) message(acct *account.Account, bodyFlag string) (*compose.Me
 	if err != nil {
 		return nil, err
 	}
+	var invite []byte
+	if f.invite != "" {
+		if invite, err = os.ReadFile(f.invite); err != nil {
+			return nil, fmt.Errorf("reading --invite %s: %w", f.invite, err)
+		}
+	}
 	return &compose.Message{
+		Invite:      invite,
 		From:        &mail.Address{Address: acct.Email},
 		To:          to,
 		Cc:          cc,

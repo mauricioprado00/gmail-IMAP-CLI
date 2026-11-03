@@ -242,3 +242,153 @@ func TestBuildRequiresRecipient(t *testing.T) {
 		t.Error("expected error without recipients")
 	}
 }
+
+// readParts splits a multipart body into its parts' headers and raw bodies.
+func readParts(t *testing.T, contentType string, body io.Reader) ([]map[string]string, []string) {
+	t.Helper()
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		t.Fatalf("Content-Type %q: %v", contentType, err)
+	}
+	mr := multipart.NewReader(body, params["boundary"])
+	var headers []map[string]string
+	var bodies []string
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			return headers, bodies
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(p)
+		h := map[string]string{}
+		for k := range p.Header {
+			h[k] = p.Header.Get(k)
+		}
+		headers = append(headers, h)
+		bodies = append(bodies, string(b))
+	}
+}
+
+// TypeByExtension and explicit types can carry parameters ("text/html;
+// charset=utf-8"); FormatMediaType rejects those, which used to leave the
+// attachment with an empty Content-Type.
+func TestAttachmentContentTypeKeepsParams(t *testing.T) {
+	m := &Message{
+		From: addr("me@example.com"),
+		To:   []*mail.Address{addr("ann@example.com")},
+		Text: "x",
+		Attachments: []Attachment{
+			{Name: "page.html", Data: []byte("<p>hi</p>")}, // built-in table: text/html; charset=utf-8
+			{Name: "cal.ics", ContentType: "text/calendar; charset=utf-8", Data: []byte("BEGIN:VCALENDAR")},
+			{Name: "blob", ContentType: "not a type;;", Data: []byte{0}},
+		},
+	}
+	raw, err := m.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, _ := readParts(t, msg.Header.Get("Content-Type"), msg.Body)
+	want := []string{
+		"text/plain; charset=utf-8",
+		"text/html; charset=utf-8; name=page.html",
+		"text/calendar; charset=utf-8; name=cal.ics",
+		"application/octet-stream; name=blob",
+	}
+	for i, w := range want {
+		if i >= len(headers) || headers[i]["Content-Type"] != w {
+			t.Errorf("part %d Content-Type = %q, want %q", i, headers[i]["Content-Type"], w)
+		}
+	}
+}
+
+const testICS = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\n" +
+	"UID:1@example.com\r\nSUMMARY:Café\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+// The layout Gmail needs for its Accept/Decline card, with --attach files and
+// a forwarded message after the invitation's own .ics copy.
+func TestBuildInvite(t *testing.T) {
+	m := &Message{
+		From:        addr("me@example.com"),
+		To:          []*mail.Address{addr("ann@example.com")},
+		Text:        "Join us",
+		Invite:      []byte(testICS),
+		Attachments: []Attachment{{Name: "agenda.pdf", Data: []byte("%PDF")}},
+		Embedded:    &Embedded{Name: "orig.eml", Raw: []byte("Subject: inner\r\n\r\nbody\r\n")},
+	}
+	raw, err := m.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, bodies := readParts(t, msg.Header.Get("Content-Type"), msg.Body)
+	if len(headers) != 4 {
+		t.Fatalf("got %d top-level parts, want 4: %v", len(headers), headers)
+	}
+	if !strings.HasPrefix(headers[0]["Content-Type"], "multipart/alternative;") {
+		t.Fatalf("first part = %q, want multipart/alternative", headers[0]["Content-Type"])
+	}
+	wantTypes := []string{
+		"application/ics; name=invite.ics",
+		"application/pdf; name=agenda.pdf",
+		"message/rfc822; name=orig.eml",
+	}
+	for i, w := range wantTypes {
+		if headers[i+1]["Content-Type"] != w {
+			t.Errorf("part %d Content-Type = %q, want %q", i+1, headers[i+1]["Content-Type"], w)
+		}
+	}
+	if ics, _ := base64.StdEncoding.DecodeString(bodies[1]); string(ics) != testICS {
+		t.Errorf("invite.ics attachment = %q", ics)
+	}
+
+	altHeaders, altBodies := readParts(t, headers[0]["Content-Type"], strings.NewReader(bodies[0]))
+	if len(altHeaders) != 2 {
+		t.Fatalf("alternative has %d parts, want 2", len(altHeaders))
+	}
+	if altHeaders[0]["Content-Type"] != "text/plain; charset=utf-8" || altBodies[0] != "Join us" {
+		t.Errorf("text part = %q %q", altHeaders[0]["Content-Type"], altBodies[0])
+	}
+	mt, params, _ := mime.ParseMediaType(altHeaders[1]["Content-Type"])
+	if mt != "text/calendar" || params["method"] != "REQUEST" || params["charset"] != "UTF-8" {
+		t.Errorf("calendar part Content-Type = %q", altHeaders[1]["Content-Type"])
+	}
+	if _, ok := altHeaders[1]["Content-Disposition"]; ok {
+		t.Error("calendar part must be inline, not an attachment")
+	}
+	if cal, _ := base64.StdEncoding.DecodeString(altBodies[1]); string(cal) != testICS {
+		t.Errorf("calendar part = %q", cal)
+	}
+}
+
+func TestInviteMethod(t *testing.T) {
+	cases := map[string]string{
+		testICS: "REQUEST",
+		"BEGIN:VCALENDAR\nmethod:cancel\nEND:VCALENDAR\n": "CANCEL",
+		"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n":            "REQUEST",
+	}
+	for in, want := range cases {
+		if got := inviteMethod([]byte(in)); got != want {
+			t.Errorf("inviteMethod(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBuildInviteRejectsNonCalendar(t *testing.T) {
+	m := &Message{
+		From:   addr("me@example.com"),
+		To:     []*mail.Address{addr("ann@example.com")},
+		Invite: []byte("%PDF-1.4"),
+	}
+	if _, err := m.Build(); err == nil {
+		t.Error("expected an error for a non-iCalendar invitation")
+	}
+}

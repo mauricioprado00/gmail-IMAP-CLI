@@ -538,12 +538,36 @@ gic send --to a@x.com --subject "Test" --body "Hello" --dry-run > preview.eml
 | `--subject <text>` | Subject (UTF-8 is RFC 2047-encoded when needed). |
 | `--body <text>` | Plain-text body. Mutually exclusive with `--body-file`. |
 | `--body-file <path>` | Read the plain-text body from a file; `-` reads stdin. |
-| `--attach <path>` | Attach a file (repeatable). Content type is sniffed from the extension, falling back to `application/octet-stream`. |
+| `--attach <path>` | Attach a file (repeatable). The content type is looked up from the file extension (Go's built-in table plus the system MIME database), falling back to `application/octet-stream`. |
+| `--invite <file.ics>` | Send an iCalendar file as a calendar invitation, so Gmail and other clients show Accept/Decline. See below. |
 | `--dry-run` | Print the message to stdout instead of sending. |
 
 The body is sent as `text/plain; charset=utf-8` (quoted-printable). With
 attachments the message becomes `multipart/mixed` with base64 parts. A fresh
 `Message-ID` of the form `<random@gic>` is always generated.
+
+With `--invite`, the body is laid out the way Gmail needs to show its RSVP
+card:
+
+```
+multipart/mixed
+├─ multipart/alternative
+│  ├─ text/plain                                  (the body)
+│  └─ text/calendar; charset=UTF-8; method=REQUEST (the .ics, inline)
+├─ application/ics; name=invite.ics               (the same .ics, attached)
+└─ … --attach files, forwarded parts
+```
+
+`method=` is copied from the file's `METHOD:` line (`REQUEST` when it has
+none), so a `METHOD:CANCEL` file sends a cancellation. The file must start
+with `BEGIN:VCALENDAR`; it is otherwise sent byte for byte, so the `UID`,
+`ORGANIZER` (normally the sending account) and `ATTENDEE` lines are up to
+you. Gmail renders the card only for the attendees' copies, never for the
+organizer's own copy in Sent Mail.
+
+```sh
+gic send --to ann@x.com --subject "Weekly sync" --body "See invite." --invite sync.ics
+```
 
 On success gic prints a JSON summary:
 ```json
@@ -579,7 +603,7 @@ Fetches the single message `--uid` from the current mailbox (`$GIC_MAILBOX`/
   `On <date>, <from> wrote:` followed by `> `-prefixed lines. `--no-quote`
   omits it. HTML-only originals are not converted; the reply simply carries
   no quote.
-- `--body`/`--body-file`/`--attach`/`--dry-run` behave as in `gic send`.
+- `--body`/`--body-file`/`--attach`/`--invite`/`--dry-run` behave as in `gic send`.
 
 After the server accepts the reply, gic sets `\Answered` on the original
 (the flag Gmail shows as the replied arrow). A failure to set the flag is
@@ -607,7 +631,8 @@ Fetches the single message `--uid` and forwards it to the given recipients
 - `--as-attachment`: the whole original is attached untouched as a
   `message/rfc822` part, with `--note` as the text part. This is the
   lossless option.
-- `--attach` adds further files; `--dry-run` previews.
+- `--attach` adds further files, `--invite` adds a calendar invitation (the
+  `--note` text becomes its plain-text part); `--dry-run` previews.
 
 ### Verbose tracing
 

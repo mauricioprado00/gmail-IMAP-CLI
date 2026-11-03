@@ -50,6 +50,7 @@ type Message struct {
 	Date        time.Time // zero: now
 	MessageID   string    // "<id>"; empty: generated
 	Attachments []Attachment
+	Invite      []byte // iCalendar data sent as a calendar invitation; nil: none
 	RawParts    []RawPart
 	Embedded    *Embedded
 }
@@ -142,22 +143,29 @@ func (m *Message) Build() ([]byte, error) {
 	}
 	writeHeader(&h, "Content-Type", fmt.Sprintf("multipart/mixed; boundary=%q", boundary))
 	h.WriteString("\r\n")
-	for _, p := range parts {
-		h.WriteString("--" + boundary + "\r\n")
-		for _, k := range sortedKeys(p.Header) {
-			writeHeader(&h, k, p.Header.Get(k))
-		}
-		h.WriteString("\r\n")
-		h.Write(p.Body)
-		if !bytes.HasSuffix(p.Body, []byte("\r\n")) {
-			h.WriteString("\r\n")
-		}
-	}
-	h.WriteString("--" + boundary + "--\r\n")
+	writeParts(&h, boundary, parts)
 	return h.Bytes(), nil
 }
 
-// bodyParts returns the text part followed by every attachment part.
+// writeParts writes parts as the body of a multipart entity, closing
+// delimiter included.
+func writeParts(b *bytes.Buffer, boundary string, parts []RawPart) {
+	for _, p := range parts {
+		b.WriteString("--" + boundary + "\r\n")
+		for _, k := range sortedKeys(p.Header) {
+			writeHeader(b, k, p.Header.Get(k))
+		}
+		b.WriteString("\r\n")
+		b.Write(p.Body)
+		if !bytes.HasSuffix(p.Body, []byte("\r\n")) {
+			b.WriteString("\r\n")
+		}
+	}
+	b.WriteString("--" + boundary + "--\r\n")
+}
+
+// bodyParts returns the text part (wrapped with the invitation when there is
+// one) followed by every attachment part.
 func (m *Message) bodyParts() ([]RawPart, error) {
 	text := strings.ReplaceAll(m.Text, "\r\n", "\n")
 	var qp bytes.Buffer
@@ -175,27 +183,26 @@ func (m *Message) bodyParts() ([]RawPart, error) {
 		},
 		Body: qp.Bytes(),
 	}}
-
-	for _, a := range m.Attachments {
-		ct := a.ContentType
-		if ct == "" {
-			ct = mime.TypeByExtension(strings.ToLower(filepath.Ext(a.Name)))
-		}
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
-		body, err := mimeedit.EncodeBody("base64", a.Data)
+	if len(m.Invite) > 0 {
+		// Gmail shows its RSVP card only for text/calendar inside a
+		// multipart/alternative next to the text, plus an .ics attachment.
+		alt, err := inviteAlternative(parts[0], m.Invite)
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, RawPart{
-			Header: textproto.MIMEHeader{
-				"Content-Type":              {mime.FormatMediaType(ct, map[string]string{"name": a.Name})},
-				"Content-Disposition":       {mime.FormatMediaType("attachment", map[string]string{"filename": a.Name})},
-				"Content-Transfer-Encoding": {"base64"},
-			},
-			Body: body,
-		})
+		ics, err := attachmentPart(Attachment{Name: "invite.ics", ContentType: "application/ics", Data: m.Invite})
+		if err != nil {
+			return nil, err
+		}
+		parts = []RawPart{alt, ics}
+	}
+
+	for _, a := range m.Attachments {
+		p, err := attachmentPart(a)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, p)
 	}
 	parts = append(parts, m.RawParts...)
 	if m.Embedded != nil {
@@ -268,4 +275,72 @@ func ParseAddresses(values []string) ([]*mail.Address, error) {
 		out = append(out, addrs...)
 	}
 	return out, nil
+}
+
+// attachmentPart encodes a as a base64 attachment part. The content type
+// comes from a.ContentType or the name's extension; parameters such as the
+// "; charset=utf-8" Linux's MIME database adds to text/* types are kept.
+func attachmentPart(a Attachment) (RawPart, error) {
+	ct := a.ContentType
+	if ct == "" {
+		ct = mime.TypeByExtension(strings.ToLower(filepath.Ext(a.Name)))
+	}
+	mt, params, err := mime.ParseMediaType(ct)
+	if err != nil {
+		mt, params = "application/octet-stream", map[string]string{}
+	}
+	params["name"] = a.Name
+	body, err := mimeedit.EncodeBody("base64", a.Data)
+	if err != nil {
+		return RawPart{}, err
+	}
+	return RawPart{
+		Header: textproto.MIMEHeader{
+			"Content-Type":              {mime.FormatMediaType(mt, params)},
+			"Content-Disposition":       {mime.FormatMediaType("attachment", map[string]string{"filename": a.Name})},
+			"Content-Transfer-Encoding": {"base64"},
+		},
+		Body: body,
+	}, nil
+}
+
+// inviteMethod returns the METHOD property of an iCalendar object, or
+// REQUEST when it has none. METHOD is a short token, so folded lines are not
+// a concern.
+func inviteMethod(ics []byte) string {
+	for _, line := range strings.Split(strings.ReplaceAll(string(ics), "\r\n", "\n"), "\n") {
+		if v, ok := strings.CutPrefix(strings.ToUpper(line), "METHOD:"); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return "REQUEST"
+}
+
+// inviteAlternative wraps the text part and the calendar data in a
+// multipart/alternative, the shape mail clients render as an invitation.
+func inviteAlternative(text RawPart, ics []byte) (RawPart, error) {
+	if !bytes.HasPrefix(bytes.ToUpper(bytes.TrimSpace(ics)), []byte("BEGIN:VCALENDAR")) {
+		return RawPart{}, fmt.Errorf("invitation is not an iCalendar file (it must start with BEGIN:VCALENDAR)")
+	}
+	body, err := mimeedit.EncodeBody("base64", ics)
+	if err != nil {
+		return RawPart{}, err
+	}
+	cal := RawPart{
+		Header: textproto.MIMEHeader{
+			"Content-Type":              {mime.FormatMediaType("text/calendar", map[string]string{"charset": "UTF-8", "method": inviteMethod(ics)})},
+			"Content-Transfer-Encoding": {"base64"},
+		},
+		Body: body,
+	}
+	boundary, err := newBoundary()
+	if err != nil {
+		return RawPart{}, err
+	}
+	var b bytes.Buffer
+	writeParts(&b, boundary, []RawPart{text, cal})
+	return RawPart{
+		Header: textproto.MIMEHeader{"Content-Type": {fmt.Sprintf("multipart/alternative; boundary=%q", boundary)}},
+		Body:   b.Bytes(),
+	}, nil
 }
