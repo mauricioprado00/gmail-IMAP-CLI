@@ -32,6 +32,8 @@ type SendSummary struct {
 // sendFlags are the flags shared by send, reply and forward.
 type sendFlags struct {
 	to, cc, bcc multiFlag
+	replyTo     multiFlag
+	headers     multiFlag
 	attach      multiFlag
 	invite      string
 	subject     string
@@ -44,6 +46,8 @@ func (f *sendFlags) register(fs *flag.FlagSet, bodyFlag string) {
 	fs.Var(&f.to, "to", "recipient (repeatable, comma lists allowed)")
 	fs.Var(&f.cc, "cc", "carbon-copy recipient (repeatable)")
 	fs.Var(&f.bcc, "bcc", "blind recipient (repeatable; envelope only)")
+	fs.Var(&f.replyTo, "reply-to", "Reply-To address (repeatable, comma lists allowed)")
+	fs.Var(&f.headers, "header", `extra header "Name: value" (repeatable)`)
 	fs.Var(&f.attach, "attach", "file to attach (repeatable)")
 	fs.StringVar(&f.invite, "invite", "", "iCalendar file sent as an inline invitation (text/calendar with its METHOD)")
 	fs.StringVar(&f.body, bodyFlag, "", "plain-text body")
@@ -245,6 +249,18 @@ func (f *sendFlags) message(acct *account.Account, bodyFlag string) (*compose.Me
 	if err != nil {
 		return nil, err
 	}
+	replyTo, err := compose.ParseAddresses(f.replyTo)
+	if err != nil {
+		return nil, err
+	}
+	var headers []compose.Header
+	for _, v := range f.headers {
+		x, err := compose.ParseHeader(v)
+		if err != nil {
+			return nil, err
+		}
+		headers = append(headers, x)
+	}
 	var invite []byte
 	if f.invite != "" {
 		if invite, err = os.ReadFile(f.invite); err != nil {
@@ -257,6 +273,8 @@ func (f *sendFlags) message(acct *account.Account, bodyFlag string) (*compose.Me
 		To:          to,
 		Cc:          cc,
 		Bcc:         bcc,
+		ReplyTo:     replyTo,
+		Headers:     headers,
 		Text:        text,
 		Attachments: attachments,
 	}, nil

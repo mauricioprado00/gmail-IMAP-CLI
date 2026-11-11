@@ -392,3 +392,98 @@ func TestBuildInviteRejectsNonCalendar(t *testing.T) {
 		t.Error("expected an error for a non-iCalendar invitation")
 	}
 }
+
+func TestBuildReplyToAndHeaders(t *testing.T) {
+	m := &Message{
+		From:    addr("me@example.com"),
+		To:      []*mail.Address{addr("ann@example.com")},
+		ReplyTo: []*mail.Address{addr("Support <help@example.com>"), addr("ops@example.com")},
+		Headers: []Header{
+			{Name: "X-Campaign-ID", Value: "q4-2026"},
+			{Name: "List-Unsubscribe", Value: "<mailto:unsub@example.com>"},
+			{Name: "X-Note", Value: "Café"},
+		},
+		Subject: "Hi",
+		Text:    "Hello\n",
+	}
+	raw, err := m.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	for _, want := range []string{
+		"Reply-To: \"Support\" <help@example.com>,\r\n ops@example.com\r\n",
+		"X-Campaign-ID: q4-2026\r\n",
+		"List-Unsubscribe: <mailto:unsub@example.com>\r\n",
+		"X-Note: =?utf-8?q?Caf=C3=A9?=\r\n",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in:\n%s", want, s)
+		}
+	}
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt, err := msg.Header.AddressList("Reply-To")
+	if err != nil || len(rt) != 2 || rt[0].Address != "help@example.com" || rt[1].Address != "ops@example.com" {
+		t.Errorf("Reply-To parsed as %v, %v", rt, err)
+	}
+	// Reply-To is not a recipient.
+	if got := m.Recipients(); len(got) != 1 || got[0] != "ann@example.com" {
+		t.Errorf("Recipients() = %v", got)
+	}
+	// A reply to what we sent goes to Reply-To.
+	o, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, _ := o.ReplyAddresses("ann@example.com", false)
+	if len(to) != 2 || to[0].Address != "help@example.com" {
+		t.Errorf("ReplyAddresses() to = %v", to)
+	}
+}
+
+func TestParseHeader(t *testing.T) {
+	ok := map[string]Header{
+		"X-Tag: a=b":                     {"X-Tag", "a=b"},
+		"X-Tag=a:b":                      {"X-Tag", "a:b"},
+		"  Importance :  high ":          {"Importance", "high"},
+		"Auto-Submitted: auto-generated": {"Auto-Submitted", "auto-generated"},
+		"X-Empty:":                       {"X-Empty", ""},
+	}
+	for in, want := range ok {
+		got, err := ParseHeader(in)
+		if err != nil || got != want {
+			t.Errorf("ParseHeader(%q) = %+v, %v; want %+v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{
+		"no separator",
+		": value",
+		"Bad Name: x",
+		"From: other@example.com",
+		"reply-to: x@example.com",
+		"Message-ID: <x@y>",
+		"MIME-Version: 2.0",
+		"Content-Type: text/html",
+		"bcc: x@example.com",
+		"X-Inject: a\r\nBcc: victim@example.com",
+		"X-Inject: a\nb",
+	} {
+		if _, err := ParseHeader(in); err == nil {
+			t.Errorf("ParseHeader(%q) accepted", in)
+		}
+	}
+}
+
+func TestBuildRejectsReservedHeader(t *testing.T) {
+	m := &Message{
+		From:    addr("me@example.com"),
+		To:      []*mail.Address{addr("ann@example.com")},
+		Headers: []Header{{Name: "Subject", Value: "second subject"}},
+	}
+	if _, err := m.Build(); err == nil {
+		t.Error("Build accepted a Subject in Headers")
+	}
+}

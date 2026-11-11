@@ -535,6 +535,8 @@ gic send --to a@x.com --subject "Test" --body "Hello" --dry-run > preview.eml
 | `--to <addr>` | Recipient (repeatable; a value may also be a comma-separated list). At least one `--to`, `--cc` or `--bcc` is required. Accepts `Name <addr>` form. |
 | `--cc <addr>` | Carbon-copy recipient (repeatable). |
 | `--bcc <addr>` | Blind recipient (repeatable). Included in the SMTP envelope, omitted from the headers. |
+| `--reply-to <addr>` | Address replies should go to (repeatable; comma lists and `Name <addr>` allowed). Written as `Reply-To`; not a recipient. |
+| `--header "<Name>: <value>"` | Add any other header field (repeatable). `Name=value` also works. See below. |
 | `--subject <text>` | Subject (UTF-8 is RFC 2047-encoded when needed). |
 | `--body <text>` | Plain-text body. Mutually exclusive with `--body-file`. |
 | `--body-file <path>` | Read the plain-text body from a file; `-` reads stdin. |
@@ -545,6 +547,20 @@ gic send --to a@x.com --subject "Test" --body "Hello" --dry-run > preview.eml
 The body is sent as `text/plain; charset=utf-8` (quoted-printable). With
 attachments the message becomes `multipart/mixed` with base64 parts. A fresh
 `Message-ID` of the form `<random@gic>` is always generated.
+
+`--header` adds fields such as `X-…` tags, `List-Unsubscribe`,
+`Auto-Submitted` or `Importance` verbatim (non-ASCII values are RFC
+2047-encoded), in the order given, after the standard fields. It refuses
+the fields gic writes itself (`Date`, `From`, `Sender`, `To`, `Cc`, `Bcc`,
+`Reply-To`, `Subject`, `Message-ID`, `In-Reply-To`, `References`,
+`MIME-Version`) and every `Content-*` field, and values containing a line
+break, so a header value can never inject further fields.
+
+```sh
+gic send --to ann@x.com --subject "Report" --body "See attached." \
+  --reply-to "Support <help@x.com>" \
+  --header "X-Campaign: q4" --header "Auto-Submitted: auto-generated"
+```
 
 With `--invite`, the body is laid out the way Gmail needs to show its RSVP
 card:
@@ -603,7 +619,8 @@ Fetches the single message `--uid` from the current mailbox (`$GIC_MAILBOX`/
   `On <date>, <from> wrote:` followed by `> `-prefixed lines. `--no-quote`
   omits it. HTML-only originals are not converted; the reply simply carries
   no quote.
-- `--body`/`--body-file`/`--attach`/`--invite`/`--dry-run` behave as in `gic send`.
+- `--body`/`--body-file`/`--attach`/`--invite`/`--reply-to`/`--header`/`--dry-run`
+  behave as in `gic send`.
 
 After the server accepts the reply, gic sets `\Answered` on the original
 (the flag Gmail shows as the replied arrow). A failure to set the flag is
@@ -632,7 +649,8 @@ Fetches the single message `--uid` and forwards it to the given recipients
   `message/rfc822` part, with `--note` as the text part. This is the
   lossless option.
 - `--attach` adds further files, `--invite` adds a calendar invitation (the
-  `--note` text becomes its plain-text part); `--dry-run` previews.
+  `--note` text becomes its plain-text part); `--reply-to` and `--header`
+  behave as in `gic send`; `--dry-run` previews.
 
 ### Verbose tracing
 

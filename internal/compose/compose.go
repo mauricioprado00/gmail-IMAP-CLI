@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gic/internal/mimeedit"
 )
@@ -39,10 +40,18 @@ type Embedded struct {
 	Raw  []byte
 }
 
+// Header is an extra header field written as given (non-ASCII values are
+// RFC 2047-encoded).
+type Header struct {
+	Name, Value string
+}
+
 // Message is what Build turns into bytes.
 type Message struct {
 	From        *mail.Address
 	To, Cc, Bcc []*mail.Address
+	ReplyTo     []*mail.Address
+	Headers     []Header // extra fields; see CheckHeader for what is refused
 	Subject     string
 	Text        string // plain-text body; "\n" or "\r\n" line endings
 	InReplyTo   string // "<id>" or ""
@@ -92,6 +101,11 @@ func (m *Message) Build() ([]byte, error) {
 	if len(m.To)+len(m.Cc)+len(m.Bcc) == 0 {
 		return nil, fmt.Errorf("at least one recipient is required")
 	}
+	for _, x := range m.Headers {
+		if err := CheckHeader(x); err != nil {
+			return nil, err
+		}
+	}
 	if m.MessageID == "" {
 		id, err := NewMessageID()
 		if err != nil {
@@ -113,6 +127,9 @@ func (m *Message) Build() ([]byte, error) {
 	if len(m.Cc) > 0 {
 		writeHeader(&h, "Cc", joinAddresses(m.Cc))
 	}
+	if len(m.ReplyTo) > 0 {
+		writeHeader(&h, "Reply-To", joinAddresses(m.ReplyTo))
+	}
 	writeHeader(&h, "Subject", mime.QEncoding.Encode("utf-8", m.Subject))
 	writeHeader(&h, "Message-ID", m.MessageID)
 	if m.InReplyTo != "" {
@@ -120,6 +137,9 @@ func (m *Message) Build() ([]byte, error) {
 	}
 	if m.References != "" {
 		writeHeader(&h, "References", m.References)
+	}
+	for _, x := range m.Headers {
+		writeHeader(&h, x.Name, mime.QEncoding.Encode("utf-8", x.Value))
 	}
 	writeHeader(&h, "MIME-Version", "1.0")
 
@@ -275,6 +295,69 @@ func ParseAddresses(values []string) ([]*mail.Address, error) {
 		out = append(out, addrs...)
 	}
 	return out, nil
+}
+
+// reservedHeaders are written by Build itself (or, for Bcc, deliberately
+// never written), so --header may not set them.
+var reservedHeaders = map[string]string{
+	"Date":         "",
+	"From":         "it is always the sending account",
+	"Sender":       "it is always the sending account",
+	"To":           "use --to",
+	"Cc":           "use --cc",
+	"Bcc":          "use --bcc",
+	"Reply-To":     "use --reply-to",
+	"Subject":      "use --subject",
+	"Message-Id":   "",
+	"In-Reply-To":  "use gic reply",
+	"References":   "use gic reply",
+	"Mime-Version": "",
+}
+
+// CheckHeader reports whether x may be added with Message.Headers: a valid
+// RFC 5322 field name that gic does not write itself (nor any Content-*
+// field), and a single-line value.
+func CheckHeader(x Header) error {
+	if x.Name == "" {
+		return fmt.Errorf("empty header name")
+	}
+	for _, r := range x.Name {
+		if r < 33 || r > 126 || r == ':' {
+			return fmt.Errorf("invalid header name %q", x.Name)
+		}
+	}
+	canon := textproto.CanonicalMIMEHeaderKey(x.Name)
+	if hint, ok := reservedHeaders[canon]; ok {
+		msg := fmt.Sprintf("header %s is set by gic and cannot be given with --header", canon)
+		if hint != "" {
+			msg += " (" + hint + ")"
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	if strings.HasPrefix(canon, "Content-") {
+		return fmt.Errorf("header %s describes the body gic builds and cannot be given with --header", canon)
+	}
+	if strings.ContainsAny(x.Value, "\r\n") {
+		return fmt.Errorf("header %s: value must be a single line", canon)
+	}
+	if !utf8.ValidString(x.Value) {
+		return fmt.Errorf("header %s: value is not valid UTF-8", canon)
+	}
+	return nil
+}
+
+// ParseHeader parses a --header value, "Name: value" or "Name=value"
+// (whichever separator comes first), and checks it with CheckHeader.
+func ParseHeader(s string) (Header, error) {
+	i := strings.IndexAny(s, ":=")
+	if i < 0 {
+		return Header{}, fmt.Errorf("invalid --header %q (want \"Name: value\")", s)
+	}
+	x := Header{Name: strings.TrimSpace(s[:i]), Value: strings.TrimSpace(s[i+1:])}
+	if err := CheckHeader(x); err != nil {
+		return Header{}, err
+	}
+	return x, nil
 }
 
 // attachmentPart encodes a as a base64 attachment part. The content type
