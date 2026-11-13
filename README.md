@@ -25,6 +25,15 @@ make vet
 make install # copies bin/gic-bin to ~/.local/bin/gic-bin
 ```
 
+`gic version` prints the commit the binary was built from (`git describe
+--always --dirty --tags`, e.g. `gic edb2e9f`, with `-dirty` when the tree had
+uncommitted changes); `make install` prints it for the installed copy. To
+check the binary on your `$PATH` is the one you just built:
+```sh
+gic version && git describe --always --dirty --tags
+```
+A build made with `./gorun.sh` directly reports `gic dev`.
+
 **Option B — `./gorun.sh` directly** (what `make` calls under the hood): a
 plain, non-interactive `docker run --rm` against `golang:1.23`, with a
 named volume (`gic-gomodcache`) so module downloads are cached across

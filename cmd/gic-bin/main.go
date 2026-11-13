@@ -11,6 +11,10 @@ import (
 	"gic/internal/imapd"
 )
 
+// version is set at build time by the Makefile (-X main.version=...) from
+// `git describe --always --dirty --tags`; "dev" means a build without it.
+var version = "dev"
+
 // extractGlobals scans args for -s, -m/--mailbox, -v/--verbose anywhere in
 // the argument list (so they can appear before or interspersed with the
 // subcommand), returning the parsed globals and the remaining args.
@@ -146,6 +150,8 @@ func main() {
 		cli.Forward(rest, g)
 	case "shell-init":
 		cli.ShellInit()
+	case "version", "--version":
+		fmt.Println("gic " + version)
 	default:
 		usage()
 		os.Exit(1)
@@ -211,6 +217,7 @@ Commands:
   reply --uid <uid> [--all] (--body <t>|--body-file <f>) [--no-quote] [--dry-run]
   forward --uid <uid> --to <addr> [--note <t>] [--as-attachment] [--dry-run]
   shell-init                       print the shell function wrapper
+  version                          print the build version (git commit)
 
 See docs/COMMANDS.md for full details.`)
 }
